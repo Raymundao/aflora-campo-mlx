@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "GLX v2 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "GLX v3 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1774,6 +1774,25 @@ const CAMADAS_SAT = [
 ];
 let _mapa = null, _watchId = null, _orientHandler = null;
 
+// Wake Lock: mantém a tela ligada gravando trilha (senão o navegador suspende o GPS
+// ao apagar a tela). Não é "segundo plano" real — PWA não grava com app minimizado.
+let _wakeLock = null, _wakeWanted = false;
+async function _adquirirWake() {
+  if (!_wakeWanted || _wakeLock) return;
+  try {
+    if ("wakeLock" in navigator) {
+      _wakeLock = await navigator.wakeLock.request("screen");
+      _wakeLock.addEventListener("release", () => { _wakeLock = null; });
+    }
+  } catch (e) { _wakeLock = null; }
+}
+function manterTelaLigada(on) {
+  _wakeWanted = !!on;
+  if (on) _adquirirWake();
+  else { try { if (_wakeLock) _wakeLock.release(); } catch (e) { /* */ } _wakeLock = null; }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") _adquirirWake(); });
+
 function destruirMapa() {
   if (_watchId != null && navigator.geolocation) { navigator.geolocation.clearWatch(_watchId); _watchId = null; }
   if (_orientHandler) {
@@ -1781,6 +1800,7 @@ function destruirMapa() {
     window.removeEventListener("deviceorientation", _orientHandler);
     _orientHandler = null;
   }
+  manterTelaLigada(false);
   if (_mapa) { try { _mapa.remove(); } catch (e) { /* */ } _mapa = null; }
 }
 // distância (m) e rumo (graus) entre dois {lat,lng} — Haversine
@@ -1992,7 +2012,8 @@ async function telaCenso(estratoId, modo = "censo") {
     map.addLayer({ id: "fitos-f", type: "fill", source: "fitos", paint: { "fill-color": ["get", "cor"], "fill-opacity": ["get", "op"] } });
     map.addLayer({ id: "fitos-l", type: "line", source: "fitos", paint: { "line-color": ["get", "borda"], "line-width": ["get", "peso"] } });
     map.addLayer({ id: "trilhas-l", type: "line", source: "trilhas", paint: { "line-color": "#E53935", "line-width": 3, "line-opacity": 0.75 } });
-    map.addLayer({ id: "rastro-l", type: "line", source: "rastro", paint: { "line-color": "#FFC107", "line-width": 3, "line-opacity": 0.7 } });
+    map.addLayer({ id: "rastro-casing", type: "line", source: "rastro", paint: { "line-color": "#ffffff", "line-width": 6, "line-opacity": 0.5 } });
+    map.addLayer({ id: "rastro-l", type: "line", source: "rastro", paint: { "line-color": "#1565C0", "line-width": 4, "line-opacity": 0.85 } });
     map.addLayer({ id: "trkrec-l", type: "line", source: "trkrec", paint: { "line-color": "#E53935", "line-width": 4, "line-opacity": 0.9 } });
     map.addLayer({ id: "desenho-f", type: "fill", source: "desenho", filter: ["==", "$type", "Polygon"], paint: { "fill-color": "#FFA000", "fill-opacity": 0.2 } });
     map.addLayer({ id: "desenho-l", type: "line", source: "desenho", filter: ["!=", "$type", "Point"], paint: { "line-color": "#FF6F00", "line-width": 2, "line-dasharray": [2, 2] } });
@@ -2233,6 +2254,7 @@ async function telaCenso(estratoId, modo = "censo") {
   if ($("#censo-trilha")) $("#censo-trilha").onclick = async () => {
     if (!gravando) {
       gravando = true;
+      manterTelaLigada(true);
       trilhaPts = []; setData("trkrec", fcVazio);
       if (userLatLng) trilhaPts.push([userLatLng.lat, userLatLng.lng]);
       $("#censo-trilha").classList.add("ativo");
@@ -2240,6 +2262,7 @@ async function telaCenso(estratoId, modo = "censo") {
       atualizarTrkBanner();
     } else {
       gravando = false;
+      manterTelaLigada(false);
       $("#censo-trilha").classList.remove("ativo");
       if (trilhaPts.length >= 2) {
         const nome = prompt("Nome da trilha:", "Trilha " + (est.trilhas.length + 1));
