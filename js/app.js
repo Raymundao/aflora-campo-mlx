@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "GLX v1 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "GLX v2 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -2030,6 +2030,8 @@ async function telaCenso(estratoId, modo = "censo") {
   // (pontos, satélite e clique agora são tratados pelo MapLibre, acima)
 
   let userLatLng = null, userAlt = null, userAcc = null, userMarker = null;
+  let seguindo = true; // mapa acompanha minha posição; arrastar desliga, 🎯 religa
+  map.on("dragstart", () => { if (seguindo) { seguindo = false; const b = $("#censo-centrar"); if (b) b.classList.remove("ativo"); } });
 
   // Régua = linha fina da minha posição até a MIRA (centro fixo da tela), desenhada
   // como overlay SVG sobre o mapa. map.project([lng,lat]) dá a posição de tela.
@@ -2088,7 +2090,7 @@ async function telaCenso(estratoId, modo = "censo") {
         elEu.innerHTML = '<div class="cone-eu" hidden></div><div class="dot-eu"></div>';
         userMarker = new ml.Marker({ element: elEu }).setLngLat([userLatLng.lng, userLatLng.lat]).addTo(map);
         map.jumpTo({ center: [userLatLng.lng, userLatLng.lat] });
-      } else userMarker.setLngLat([userLatLng.lng, userLatLng.lat]);
+      } else { userMarker.setLngLat([userLatLng.lng, userLatLng.lat]); if (seguindo) map.easeTo({ center: [userLatLng.lng, userLatLng.lat], duration: 700 }); }
       // só guarda no rastro se andei o suficiente (não polui parado)
       const last = rastro[rastro.length - 1];
       if (!last || distanciaM({ lat: last[0], lng: last[1] }, userLatLng) > 2) {
@@ -2110,7 +2112,8 @@ async function telaCenso(estratoId, modo = "censo") {
   }
 
   $("#censo-voltar").onclick = voltar;
-  $("#censo-centrar").onclick = () => { if (userLatLng) map.easeTo({ center: [userLatLng.lng, userLatLng.lat], zoom: Math.max(map.getZoom(), 18), duration: 300 }); };
+  $("#censo-centrar").onclick = () => { seguindo = true; $("#censo-centrar").classList.add("ativo"); if (userLatLng) map.easeTo({ center: [userLatLng.lng, userLatLng.lat], zoom: Math.max(map.getZoom(), 18), duration: 300 }); };
+  $("#censo-centrar").classList.add("ativo");
   if (!ehFitos) {
     $("#censo-add").onclick = () => {
       const c = map.getCenter();
