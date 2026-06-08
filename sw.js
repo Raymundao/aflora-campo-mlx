@@ -1,7 +1,7 @@
 // Service worker — cache offline dos assets do app. Cache-first com atualização
 // em segundo plano. Suba a versão (CACHE) ao alterar arquivos pra forçar refresh.
-const CACHE = "aflora-campo-glx-v4";
-const TILES = "aflora-tiles-v1";   // cache de tiles de satélite (mapa do censo, offline)
+const CACHE = "aflora-campo-glx-v5";
+const TILES = "aflora-tiles-glx-v2";   // v2: purga tiles velhas/borradas do cache antigo
 const ASSETS = [
   "./", "./index.html", "./manifest.webmanifest",
   "./css/estilo.css",
@@ -37,17 +37,20 @@ self.addEventListener("activate", (e) => {
 // campo. Quando estabilizar, dá pra voltar pro cache-first se quiser abrir mais rápido.
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
-  // Tiles de mapa: cache-first (não mudam). Servem offline depois de baixados/vistos.
+  // Tiles de satélite: REDE-PRIMEIRO. Online sempre busca a tile nova e nítida (e
+  // guarda no cache pra offline); só cai pro cache quando a rede falha. Antes era
+  // cache-first, que servia pra sempre uma tile borrada/ruim que tivesse entrado no
+  // cache — por isso "não atualizava mesmo com internet". O MapLibre precisa de tile
+  // CORS legível (resp.ok), então NÃO cacheamos resposta opaca/erro.
   if (ehTile(e.request.url)) {
     e.respondWith((async () => {
       const tc = await caches.open(TILES);
-      const hit = await tc.match(e.request);
-      if (hit) return hit;
       try {
         const resp = await fetch(e.request);
-        if (resp && (resp.ok || resp.type === "opaque")) tc.put(e.request, resp.clone());
+        if (resp && resp.ok && resp.type !== "opaque") tc.put(e.request, resp.clone());
         return resp;
       } catch (err) {
+        const hit = await tc.match(e.request);
         return hit || Response.error();
       }
     })());

@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "GLX v4 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "GLX v5 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1952,7 +1952,7 @@ async function telaCenso(estratoId, modo = "censo") {
     center: centroLL, zoom: 17,
     style: {
       version: 8, glyphs: "https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
-      sources: { sat: { type: "raster", tiles: [CAMADAS_SAT[0].url], tileSize: 256, maxzoom: 20 } },
+      sources: { sat: { type: "raster", tiles: [CAMADAS_SAT[0].url], tileSize: 256, maxzoom: 21 } },
       layers: [{ id: "sat", type: "raster", source: "sat" }],
     },
   });
