@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "GLX v9 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "GLX v10 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1991,7 +1991,7 @@ async function telaCenso(estratoId, modo = "censo") {
   const fcPts = () => (!est || est.pontosOcultos) ? fcVazio : ({ type: "FeatureCollection", features:
     est.pontos.filter((p) => p.lat != null).map((p, i) => ({ type: "Feature", geometry: { type: "Point", coordinates: [p.lon, p.lat] }, properties: { placa: String(p.placa || (i + 1)), especie: (p.especie || "").trim() } })) });
   const fcRefPts = () => ({ type: "FeatureCollection", features:
-    inv.geoRefs.filter((r) => r.tipo === "ponto" && !r.oculto).map((r) => ({ type: "Feature", geometry: { type: "Point", coordinates: [r.coords[0][1], r.coords[0][0]] }, properties: { cor: r.cor || r.corBorda || "#00BCD4", r: (r.tamanho || 12) / 2 } })) });
+    inv.geoRefs.filter((r) => r.tipo === "ponto" && !r.oculto).map((r) => ({ type: "Feature", geometry: { type: "Point", coordinates: [r.coords[0][1], r.coords[0][0]] }, properties: { cor: r.cor || r.corBorda || "#00BCD4", r: (r.tamanho || 12) / 2, nome: (r.nome || "").toString() } })) });
   const fcGeoPolis = () => fcPolis(inv.geoRefs.filter((r) => r.tipo === "poligono"), false);
   const fcGeoLinhas = () => ({ type: "FeatureCollection", features:
     inv.geoRefs.filter((r) => r.tipo === "linha" && !r.oculto).map((r) => ({ type: "Feature", geometry: { type: "LineString", coordinates: aLinha(r.coords) }, properties: { cor: r.corBorda || "#00BCD4", peso: r.peso || 2 } })) });
@@ -2023,6 +2023,8 @@ async function telaCenso(estratoId, modo = "censo") {
     map.addLayer({ id: "desenho-l", type: "line", source: "desenho", filter: ["!=", "$type", "Point"], paint: { "line-color": "#FF6F00", "line-width": 2, "line-dasharray": [2, 2] } });
     map.addLayer({ id: "desenho-p", type: "circle", source: "desenho", filter: ["==", "$type", "Point"], paint: { "circle-radius": 4, "circle-color": "#FF6F00" } });
     map.addLayer({ id: "refpts-c", type: "circle", source: "refpts", paint: { "circle-radius": ["get", "r"], "circle-color": ["get", "cor"], "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
+    // nomes dos pontos importados (só visualização): camada de texto ligada/desligada pelo 🏷️
+    map.addLayer({ id: "refpts-l", type: "symbol", source: "refpts", layout: { "visibility": "none", "text-field": ["get", "nome"], "text-font": ["Open Sans Bold"], "text-size": 11, "text-allow-overlap": false, "text-offset": [0, 1.1], "text-anchor": "top" }, paint: { "text-color": "#fff", "text-halo-color": "#000", "text-halo-width": 1.4 } });
     map.addLayer({ id: "pts-c", type: "circle", source: "pts", paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 3, 17, 7, 20, 9], "circle-color": "#1B5E20", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
     map.addLayer({ id: "pts-l", type: "symbol", source: "pts", minzoom: 16, layout: { "visibility": "none", "text-field": ["get", "placa"], "text-font": ["Open Sans Bold"], "text-size": 11, "text-allow-overlap": false }, paint: { "text-color": "#fff", "text-halo-color": "#000", "text-halo-width": 1.4 } });
   }
@@ -2184,6 +2186,11 @@ async function telaCenso(estratoId, modo = "censo") {
     if (map.getLayer("pts-l")) {
       map.setLayoutProperty("pts-l", "visibility", map._labelMode > 0 ? "visible" : "none");
       map.setLayoutProperty("pts-l", "text-field", ["get", map._labelMode === 2 ? "especie" : "placa"]);
+    }
+    // pontos importados (só visualização) não têm placa/espécie — mostram o nome
+    // sempre que os nomes estão ligados (modo 1 ou 2), e somem no modo 0.
+    if (map.getLayer("refpts-l")) {
+      map.setLayoutProperty("refpts-l", "visibility", map._labelMode > 0 ? "visible" : "none");
     }
   };
   // some/mostra os botões de baixo (+Ponto / Desenhar fito) e o 🎯 conforme o painel abre/fecha
