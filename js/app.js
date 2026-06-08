@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "GLX v8 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "GLX v9 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -2107,8 +2107,9 @@ async function telaCenso(estratoId, modo = "censo") {
     box.innerHTML = `<span class="gps-dot" style="background:${cor}"></span>± ${fmtNum(userAcc, 0)} m${alt}`;
   }
 
-  // rastro recente (breadcrumb): linha amarela dos últimos passos (fonte 'rastro').
-  const RASTRO_MAX = 30;
+  // rastro recente (breadcrumb): linha azul dos últimos passos (fonte 'rastro').
+  // a cauda some conforme ando (FIFO). 21 ≈ 30% mais curto que os 30 anteriores → limpa mais rápido.
+  const RASTRO_MAX = 21;
   const rastro = [];
   function desenharRastro() {
     const data = rastro.length > 1
