@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "GLX v3 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "GLX v4 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1923,7 +1923,7 @@ async function telaCenso(estratoId, modo = "censo") {
         ${ehFitos ? "" : '<button class="censo-fab" id="censo-lista" title="Lista de pontos">📋</button>'}
         <button class="censo-fab" id="censo-bussola" title="Bússola">🧭</button>
         ${ehFitos ? "" : '<button class="censo-fab" id="censo-trilha" title="Gravar trilha">🛤️</button>'}
-        ${ehFitos ? "" : '<button class="censo-fab ativo" id="censo-labels" title="Mostrar/ocultar nomes (placas)">🏷️</button>'}
+        ${ehFitos ? "" : '<button class="censo-fab" id="censo-labels" title="Nomes: toque p/ placa → espécie → desligar">🏷️</button>'}
         <button class="censo-fab" id="censo-desenho" title="Desenhar fitofisionomia/polígono">✏️</button>
         <button class="censo-fab" id="censo-importar" title="Importar KML (ADA…)">📂</button>
         <button class="censo-fab" id="censo-baixar" title="Baixar área offline">⬇</button>
@@ -1969,7 +1969,7 @@ async function telaCenso(estratoId, modo = "censo") {
     }, onRemove() {},
   }, "top-right");
   _mapa = map;
-  map._mostrarLabels = true;
+  map._labelMode = 0; // nomes: 0 off, 1 placa, 2 espécie
 
   // ---- geometria → GeoJSON (MapLibre usa [lng,lat]; nossos dados são [lat,lon]) ----
   const fcVazio = { type: "FeatureCollection", features: [] };
@@ -1988,7 +1988,7 @@ async function telaCenso(estratoId, modo = "censo") {
     return { type: "FeatureCollection", features: feats };
   }
   const fcPts = () => (!est || est.pontosOcultos) ? fcVazio : ({ type: "FeatureCollection", features:
-    est.pontos.filter((p) => p.lat != null).map((p, i) => ({ type: "Feature", geometry: { type: "Point", coordinates: [p.lon, p.lat] }, properties: { placa: String(p.placa || (i + 1)) } })) });
+    est.pontos.filter((p) => p.lat != null).map((p, i) => ({ type: "Feature", geometry: { type: "Point", coordinates: [p.lon, p.lat] }, properties: { placa: String(p.placa || (i + 1)), especie: (p.especie || "").trim() } })) });
   const fcRefPts = () => ({ type: "FeatureCollection", features:
     inv.geoRefs.filter((r) => r.tipo === "ponto" && !r.oculto).map((r) => ({ type: "Feature", geometry: { type: "Point", coordinates: [r.coords[0][1], r.coords[0][0]] }, properties: { cor: r.cor || r.corBorda || "#00BCD4", r: (r.tamanho || 12) / 2 } })) });
   const fcGeoPolis = () => fcPolis(inv.geoRefs.filter((r) => r.tipo === "poligono"), false);
@@ -2020,7 +2020,7 @@ async function telaCenso(estratoId, modo = "censo") {
     map.addLayer({ id: "desenho-p", type: "circle", source: "desenho", filter: ["==", "$type", "Point"], paint: { "circle-radius": 4, "circle-color": "#FF6F00" } });
     map.addLayer({ id: "refpts-c", type: "circle", source: "refpts", paint: { "circle-radius": ["get", "r"], "circle-color": ["get", "cor"], "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
     map.addLayer({ id: "pts-c", type: "circle", source: "pts", paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 3, 17, 7, 20, 9], "circle-color": "#1B5E20", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
-    map.addLayer({ id: "pts-l", type: "symbol", source: "pts", minzoom: 16, layout: { "text-field": ["get", "placa"], "text-font": ["Open Sans Bold"], "text-size": 11, "text-allow-overlap": false }, paint: { "text-color": "#fff", "text-halo-color": "#000", "text-halo-width": 1.4 } });
+    map.addLayer({ id: "pts-l", type: "symbol", source: "pts", minzoom: 16, layout: { "visibility": "none", "text-field": ["get", "placa"], "text-font": ["Open Sans Bold"], "text-size": 11, "text-allow-overlap": false }, paint: { "text-color": "#fff", "text-halo-color": "#000", "text-halo-width": 1.4 } });
   }
   map.on("load", () => {
     addLayers();
@@ -2142,11 +2142,18 @@ async function telaCenso(estratoId, modo = "censo") {
     };
   }
   $("#censo-baixar").onclick = () => baixarAreaCenso();
-  // 🏷️ liga/desliga os nomes (placas) sobre os pontos do censo (visibilidade da camada)
+  // 🏷️ nomes: ciclo de 3 estados — toque 1 = placa, 2 = espécie, 3 = desliga.
   if ($("#censo-labels")) $("#censo-labels").onclick = () => {
-    map._mostrarLabels = !map._mostrarLabels;
-    $("#censo-labels").classList.toggle("ativo", map._mostrarLabels);
-    if (map.getLayer("pts-l")) map.setLayoutProperty("pts-l", "visibility", map._mostrarLabels ? "visible" : "none");
+    map._labelMode = ((map._labelMode || 0) + 1) % 3;
+    const b = $("#censo-labels");
+    b.classList.toggle("ativo", map._labelMode > 0);
+    b.textContent = map._labelMode === 2 ? "🌿" : "🏷️";
+    b.title = map._labelMode === 0 ? "Nomes: desligado (toque p/ placa)"
+      : map._labelMode === 1 ? "Nomes: placa (toque p/ espécie)" : "Nomes: espécie (toque p/ desligar)";
+    if (map.getLayer("pts-l")) {
+      map.setLayoutProperty("pts-l", "visibility", map._labelMode > 0 ? "visible" : "none");
+      map.setLayoutProperty("pts-l", "text-field", ["get", map._labelMode === 2 ? "especie" : "placa"]);
+    }
   };
   // some/mostra os botões de baixo (+Ponto / Desenhar fito) e o 🎯 conforme o painel abre/fecha
   const mostrarAdd = (v) => {
