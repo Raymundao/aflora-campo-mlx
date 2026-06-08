@@ -1,6 +1,6 @@
 {
-  "name": "Aflora Campo (MapLibre)",
-  "short_name": "Aflora GLX",
+  "name": "Aflora Campo",
+  "short_name": "Aflora Campo",
   "description": "Levantamento de flora em campo: parcelas, censo, herbáceo e mapas — em tempo real e offline.",
   "lang": "pt-BR",
   "start_url": "./",
