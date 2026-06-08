@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "GLX v7 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "GLX v8 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -2608,7 +2608,7 @@ async function telaCenso(estratoId, modo = "censo") {
     const pontosHtml = est ? `<div class="card" data-cam-pontos>
       <div class="card-corpo"><div class="card-nome">📍 Meus pontos (${est.pontos.length})</div>
         <div class="card-sub">${est.pontosOcultos ? "camada oculta" : "toque pra listar / ordenar / editar"}</div></div>
-      <div class="card-acoes"><button class="btn-mini" data-pontos-eye title="Exibir/ocultar">${olho(!est.pontosOcultos)}</button></div></div>` : "";
+      <div class="card-acoes"><button class="btn-mini" data-pontos-eye title="Exibir/ocultar">${olho(!est.pontosOcultos)}</button>${est.pontos.length ? `<button class="btn-mini perigo" data-pontos-del title="Excluir todos os pontos">🗑</button>` : ""}</div></div>` : "";
 
     // ----- seção: fitofisionomias -----
     const fitosHtml = inv.fitos.map((p) => `<div class="card">
@@ -2674,6 +2674,17 @@ async function telaCenso(estratoId, modo = "censo") {
       painel.querySelector("[data-cam-pontos] .card-corpo").onclick = abrirLista;
       const pe = painel.querySelector("[data-pontos-eye]");
       if (pe) pe.onclick = async (e) => { e.stopPropagation(); est.pontosOcultos = !est.pontosOcultos; await salvarJa(); renderPontos(); abrirCamadas(); };
+      const pd = painel.querySelector("[data-pontos-del]");
+      if (pd) pd.onclick = async (e) => {
+        e.stopPropagation();
+        const n = est.pontos.length;
+        // dado primário do censo — confirmação forte com a contagem, sem desfazer
+        if (!confirm(`Excluir TODOS os ${n} ponto(s) do censo?\n\nApaga os indivíduos cadastrados deste estrato (placa, espécie, CAP, altura). Não dá pra desfazer.`)) return;
+        est.pontos = [];
+        await salvarJa();
+        renderPontos();
+        abrirCamadas();
+      };
     }
     // fitos
     painel.querySelectorAll("[data-pol]").forEach((el) => { el.onclick = () => { const p = inv.fitos.find((x) => x.id === el.dataset.pol); if (p) abrirFormPoligono(p); }; });
