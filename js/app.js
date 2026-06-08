@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "GLX v6 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "GLX v7 (MapLibre)"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1916,6 +1916,7 @@ async function telaCenso(estratoId, modo = "censo") {
       <div class="censo-label" id="censo-label" hidden></div>
       <button class="censo-fab censo-voltar" id="censo-voltar" aria-label="Voltar">‹</button>
       <div class="censo-ver" id="censo-ver">${APP_VERSION}</div>
+      <div class="gps-box" id="gps-box" hidden></div>
       <div class="bussola" id="bussola" hidden><div class="bussola-rosa" id="bussola-rosa"><span class="bussola-n">N</span></div><span class="bussola-deg" id="bussola-deg">—</span></div>
       <div class="trk-banner" id="trk-banner" hidden></div>
       <div class="censo-fabs">
@@ -2005,7 +2006,7 @@ async function telaCenso(estratoId, modo = "censo") {
 
   function addLayers() {
     const fonte = (id) => { if (!map.getSource(id)) map.addSource(id, { type: "geojson", data: fcVazio }); };
-    ["georefs-poli", "georefs-linha", "fitos", "trilhas", "rastro", "trkrec", "desenho", "refpts", "pts"].forEach(fonte);
+    ["georefs-poli", "georefs-linha", "fitos", "trilhas", "rastro", "trkrec", "acc", "desenho", "refpts", "pts"].forEach(fonte);
     map.addLayer({ id: "georefs-poli-f", type: "fill", source: "georefs-poli", paint: { "fill-color": ["get", "cor"], "fill-opacity": ["get", "op"] } });
     map.addLayer({ id: "georefs-poli-l", type: "line", source: "georefs-poli", paint: { "line-color": ["get", "borda"], "line-width": ["get", "peso"], "line-dasharray": [2, 1.5] } });
     map.addLayer({ id: "georefs-linha-l", type: "line", source: "georefs-linha", paint: { "line-color": ["get", "cor"], "line-width": ["get", "peso"], "line-dasharray": [2, 1.5] } });
@@ -2015,6 +2016,9 @@ async function telaCenso(estratoId, modo = "censo") {
     map.addLayer({ id: "rastro-casing", type: "line", source: "rastro", paint: { "line-color": "#ffffff", "line-width": 6, "line-opacity": 0.5 } });
     map.addLayer({ id: "rastro-l", type: "line", source: "rastro", paint: { "line-color": "#1565C0", "line-width": 4, "line-opacity": 0.85 } });
     map.addLayer({ id: "trkrec-l", type: "line", source: "trkrec", paint: { "line-color": "#E53935", "line-width": 4, "line-opacity": 0.9 } });
+    // buffer de precisão do GPS (raio = erro do satélite em m) — círculo azul translúcido
+    map.addLayer({ id: "acc-f", type: "fill", source: "acc", paint: { "fill-color": "#1565C0", "fill-opacity": 0.12 } });
+    map.addLayer({ id: "acc-l", type: "line", source: "acc", paint: { "line-color": "#1565C0", "line-width": 1, "line-opacity": 0.5 } });
     map.addLayer({ id: "desenho-f", type: "fill", source: "desenho", filter: ["==", "$type", "Polygon"], paint: { "fill-color": "#FFA000", "fill-opacity": 0.2 } });
     map.addLayer({ id: "desenho-l", type: "line", source: "desenho", filter: ["!=", "$type", "Point"], paint: { "line-color": "#FF6F00", "line-width": 2, "line-dasharray": [2, 2] } });
     map.addLayer({ id: "desenho-p", type: "circle", source: "desenho", filter: ["==", "$type", "Point"], paint: { "circle-radius": 4, "circle-color": "#FF6F00" } });
@@ -2080,6 +2084,29 @@ async function telaCenso(estratoId, modo = "censo") {
   map.on("move", atualizarLeitura);
   map.on("resize", atualizarLeitura);
 
+  // polígono geodésico aproximando um círculo de raio `raioM` (m) ao redor de lat/lng.
+  function circuloGeo(lat, lng, raioM, n = 48) {
+    const R = 6378137, rad = Math.PI / 180, latR = lat * rad, coords = [];
+    for (let i = 0; i <= n; i++) {
+      const a = (i / n) * 2 * Math.PI;
+      const dLat = (raioM * Math.cos(a)) / R / rad;
+      const dLng = (raioM * Math.sin(a)) / (R * Math.cos(latR)) / rad;
+      coords.push([lng + dLng, lat + dLat]);
+    }
+    return { type: "Feature", geometry: { type: "Polygon", coordinates: [coords] }, properties: {} };
+  }
+  // caixinha discreta de GPS no topo-centro (estilo AlpineQuest). Navegador NÃO informa
+  // nº de satélites — só precisão (raio de erro em m) e altitude. Cor resume a qualidade.
+  function atualizarGps() {
+    const box = $("#gps-box");
+    if (!box) return;
+    if (userAcc == null) { box.hidden = true; return; }
+    box.hidden = false;
+    const cor = userAcc <= 8 ? "#43A047" : userAcc <= 20 ? "#FBC02D" : "#E53935";
+    const alt = (userAlt != null && isFinite(userAlt)) ? ` · ↑ ${fmtNum(userAlt, 0)} m` : "";
+    box.innerHTML = `<span class="gps-dot" style="background:${cor}"></span>± ${fmtNum(userAcc, 0)} m${alt}`;
+  }
+
   // rastro recente (breadcrumb): linha amarela dos últimos passos (fonte 'rastro').
   const RASTRO_MAX = 30;
   const rastro = [];
@@ -2112,6 +2139,9 @@ async function telaCenso(estratoId, modo = "censo") {
         userMarker = new ml.Marker({ element: elEu }).setLngLat([userLatLng.lng, userLatLng.lat]).addTo(map);
         map.jumpTo({ center: [userLatLng.lng, userLatLng.lat] });
       } else { userMarker.setLngLat([userLatLng.lng, userLatLng.lat]); if (seguindo) map.easeTo({ center: [userLatLng.lng, userLatLng.lat], duration: 700 }); }
+      // buffer de precisão: círculo geográfico (raio = erro do GPS) igual ao AlpineQuest
+      setData("acc", userAcc != null ? circuloGeo(userLatLng.lat, userLatLng.lng, userAcc) : fcVazio);
+      atualizarGps();
       // só guarda no rastro se andei o suficiente (não polui parado)
       const last = rastro[rastro.length - 1];
       if (!last || distanciaM({ lat: last[0], lng: last[1] }, userLatLng) > 2) {
