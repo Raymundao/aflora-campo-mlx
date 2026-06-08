@@ -73,8 +73,18 @@ export function renomearEspecie(inv, antigo, novo) {
   if (!novo || antigo === novo) return 0;
   let n = 0;
   for (const p of inv.parcelas) {
-    for (const ind of p.individuos) {
+    for (const ind of (p.individuos || [])) {
       if ((ind.especie || "").trim() === antigo) { ind.especie = novo; n++; }
+    }
+    // taxons das parcelas herbáceas (Braun-Blanquet) também propagam
+    for (const t of (p.taxons || [])) {
+      if ((t.nome || "").trim() === antigo) { t.nome = novo; n++; }
+    }
+  }
+  // pontos/indivíduos do censo (cada estrato) também propagam
+  for (const e of (inv.estratos || [])) {
+    for (const pt of (e.pontos || [])) {
+      if ((pt.especie || "").trim() === antigo) { pt.especie = novo; n++; }
     }
   }
   inv.especies = [...new Set((inv.especies || [])

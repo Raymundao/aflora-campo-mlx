@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v11"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v12"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1182,7 +1182,7 @@ function telaIndividuo(parcelaId, individuoId) {
       <div class="info erro-estrato-box neutro" id="erro-estrato"></div>
       <div id="aviso-outlier"></div>
       <div class="linha2">
-        <label>Placa<input id="i-placa" value="${esc(ind.placa)}" inputmode="numeric"></label>
+        <label>Placa<span class="placa-wrap"><input id="i-placa" value="${esc(ind.placa)}" inputmode="numeric" autocomplete="off"><button type="button" class="placa-kb" data-target="i-placa" title="Trocar teclado 123/ABC">ABC</button></span></label>
         <button class="perigo" id="del-ind">🗑 Excluir</button>
       </div>
       <label class="campo">Espécie
@@ -1772,7 +1772,7 @@ const CAMADAS_SAT = [
   { nome: "Google Híbrido (nomes)", url: TILE_GHIB, maxNativeZoom: 20 },
   { nome: "Esri (reserva)", url: TILE_ESRI, maxNativeZoom: 19 },
 ];
-let _mapa = null, _watchId = null, _orientHandler = null;
+let _mapa = null, _watchId = null, _orientHandler = null, _rearmWatch = null;
 
 // Wake Lock: mantém a tela ligada gravando trilha (senão o navegador suspende o GPS
 // ao apagar a tela). Não é "segundo plano" real — PWA não grava com app minimizado.
@@ -1791,9 +1791,31 @@ function manterTelaLigada(on) {
   if (on) _adquirirWake();
   else { try { if (_wakeLock) _wakeLock.release(); } catch (e) { /* */ } _wakeLock = null; }
 }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") _adquirirWake(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    _adquirirWake();
+    // iOS/Safari suspende o watch de GPS quando o app vai pra segundo plano e NÃO
+    // o retoma sozinho ao voltar — por isso "o mapa não atualizava a localização".
+    // Re-armamos o watch ao voltar pra frente (re-arma limpa o antigo antes).
+    if (_rearmWatch) _rearmWatch();
+  }
+});
+
+// Campo placa: default numérico, mas o botão 123/ABC alterna pra teclado de letras
+// (placas tipo "A43"). Troca o inputmode e re-foca pra o teclado reabrir no modo novo.
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest ? ev.target.closest(".placa-kb") : null;
+  if (!btn) return;
+  const inp = document.getElementById(btn.dataset.target);
+  if (!inp) return;
+  const numerico = inp.inputMode === "numeric";
+  inp.inputMode = numerico ? "text" : "numeric";
+  btn.textContent = numerico ? "123" : "ABC";
+  inp.focus();
+});
 
 function destruirMapa() {
+  _rearmWatch = null;
   if (_watchId != null && navigator.geolocation) { navigator.geolocation.clearWatch(_watchId); _watchId = null; }
   if (_orientHandler) {
     window.removeEventListener("deviceorientationabsolute", _orientHandler);
@@ -2133,7 +2155,7 @@ async function telaCenso(estratoId, modo = "censo") {
   }
 
   if (navigator.geolocation) {
-    _watchId = navigator.geolocation.watchPosition((pos) => {
+    const onPos = (pos) => {
       userLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       userAlt = pos.coords.altitude; userAcc = pos.coords.accuracy;
       if (!userMarker) {
@@ -2162,7 +2184,31 @@ async function telaCenso(estratoId, modo = "censo") {
         }
       }
       atualizarLeitura();
-    }, () => {}, { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
+    };
+    // Antes o callback de erro era mudo () => {} — qualquer falha de GPS (permissão
+    // negada, sinal indisponível, timeout) sumia sem aviso. Agora avisa na caixinha
+    // e re-tenta em erro transitório (não em permissão negada).
+    const onErr = (err) => {
+      const box = $("#gps-box");
+      if (box && userAcc == null) {
+        box.hidden = false;
+        box.innerHTML = `<span class="gps-dot" style="background:#E53935"></span>${err && err.code === 1 ? "GPS bloqueado — libere a localização nos ajustes" : "procurando GPS…"}`;
+      }
+      if (err && err.code !== 1) { // 1 = permissão negada (não adianta re-tentar sozinho)
+        if (_watchId != null && navigator.geolocation) { navigator.geolocation.clearWatch(_watchId); _watchId = null; }
+        setTimeout(() => { if (_rearmWatch && _mapa) _rearmWatch(); }, 3000);
+      }
+    };
+    // maximumAge baixo: o iOS tende a entregar a ÚLTIMA posição conhecida (congelada)
+    // quando maximumAge é alto; 1 s força leitura ao vivo. timeout folgado p/ dossel.
+    const opts = { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 };
+    _rearmWatch = () => {
+      if (!_mapa || !navigator.geolocation) return;
+      if (_watchId != null) { navigator.geolocation.clearWatch(_watchId); _watchId = null; }
+      _watchId = navigator.geolocation.watchPosition(onPos, onErr, opts);
+    };
+    _rearmWatch();
+    manterTelaLigada(true); // tela ligada no mapa → iOS não suspende o GPS no censo
   }
 
   $("#censo-voltar").onclick = voltar;
@@ -2800,7 +2846,7 @@ async function telaCenso(estratoId, modo = "censo") {
         <button class="btn-foto" id="cf-mover" title="Mover ponto pra mira do mapa">📍</button>
         <button class="btn-foto" id="cf-fechar">✕</button>
       </div>
-      <label class="campo">Placa<input id="cf-placa" value="${esc(pt.placa)}" inputmode="numeric"></label>
+      <label class="campo">Placa<span class="placa-wrap"><input id="cf-placa" value="${esc(pt.placa)}" inputmode="numeric" autocomplete="off"><button type="button" class="placa-kb" data-target="cf-placa" title="Trocar teclado 123/ABC">ABC</button></span></label>
       <label class="campo">Espécie
         <div class="autocomplete">
           <input id="cf-especie" value="${esc(pt.especie)}" autocomplete="off" placeholder="Digite ou toque em ▾">
