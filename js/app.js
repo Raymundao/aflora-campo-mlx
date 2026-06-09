@@ -25,7 +25,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v18"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v19"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -310,6 +310,61 @@ function iconeRefPonto(forma, tam, cor) {
   return window.L.divIcon({ className: "ref-ponto", html, iconSize: [s + 6, s + 6] });
 }
 
+// Teclado fluido dos fustes: ↓ (botão na tela OU Enter) vai pro PRÓXIMO da mesma
+// coluna (CAP→CAP, altura→altura); no fim da coluna CAP, adiciona um fuste novo
+// SEM fechar o teclado (append em vez de re-render). Atende "todos os CAPs, depois
+// as alturas". O botão ↓ faz preventDefault no toque pra o input não perder o foco
+// (teclado não fecha). onChange roda a cada digitação. Retorna { addFuste }.
+function instalarFustes(container, fustes, base, novoFusteFn, onChange) {
+  const inputAt = (col, i) => container.querySelector(`.${base}-${col}[data-i="${i}"]`);
+  const foca = (col, i) => {
+    const el = inputAt(col, i);
+    if (!el) return;
+    try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+    setTimeout(() => { try { el.scrollIntoView({ block: "center" }); } catch (e) { /* */ } }, 60);
+  };
+  const rowHtml = (f, i) => `<div class="fuste-linha" data-i="${i}">
+    <span class="fuste-num">${i + 1}</span>
+    <div class="fuste-campo"><input class="${base}-cap" data-i="${i}" type="number" step="0.1" inputmode="decimal" enterkeyhint="next" placeholder="CAP" value="${f.capCm ?? ""}"><button type="button" class="fuste-down" data-col="cap" tabindex="-1" aria-label="Próximo CAP">↓</button></div>
+    <div class="fuste-campo"><input class="${base}-alt" data-i="${i}" type="number" step="0.1" inputmode="decimal" enterkeyhint="next" placeholder="Altura" value="${f.alturaM ?? ""}"><button type="button" class="fuste-down" data-col="alt" tabindex="-1" aria-label="Próxima altura">↓</button></div>
+    <button type="button" class="perigo ${base}-fdel" data-i="${i}"${fustes.length > 1 ? "" : ' style="visibility:hidden"'}>✕</button>
+  </div>`;
+  let proximo;
+  const wireRow = (row) => {
+    const cap = row.querySelector(`.${base}-cap`), alt = row.querySelector(`.${base}-alt`);
+    cap.oninput = () => { fustes[+row.dataset.i].capCm = parseFloat(cap.value) || null; onChange(); };
+    alt.oninput = () => { fustes[+row.dataset.i].alturaM = parseFloat(alt.value) || null; onChange(); };
+    const onKey = (col) => (ev) => { if (ev.key === "Enter" || ev.key === "ArrowDown") { ev.preventDefault(); proximo(col, +row.dataset.i); } };
+    cap.addEventListener("keydown", onKey("cap"));
+    alt.addEventListener("keydown", onKey("alt"));
+    row.querySelectorAll(".fuste-down").forEach((b) => {
+      const stop = (ev) => ev.preventDefault();
+      b.addEventListener("pointerdown", stop);
+      b.addEventListener("mousedown", stop);
+      b.addEventListener("touchstart", stop, { passive: false });
+      b.onclick = () => proximo(b.dataset.col, +row.dataset.i);
+    });
+    const del = row.querySelector(`.${base}-fdel`);
+    if (del) del.onclick = () => { if (fustes.length <= 1) return; fustes.splice(+row.dataset.i, 1); onChange(); render(); };
+  };
+  const render = () => { container.innerHTML = fustes.map((f, i) => rowHtml(f, i)).join(""); container.querySelectorAll(".fuste-linha").forEach(wireRow); };
+  proximo = (col, i) => {
+    if (inputAt(col, i + 1)) { foca(col, i + 1); return; }
+    if (col === "cap") {
+      fustes.push(novoFusteFn());
+      const tmp = document.createElement("div");
+      tmp.innerHTML = rowHtml(fustes[fustes.length - 1], fustes.length - 1);
+      container.appendChild(tmp.firstElementChild);
+      wireRow(container.lastElementChild);
+      if (fustes.length === 2) { const d = container.querySelector(`.${base}-fdel[data-i="0"]`); if (d) d.style.visibility = ""; }
+      onChange();
+      foca("cap", fustes.length - 1);
+    }
+  };
+  render();
+  return { addFuste: () => proximo("cap", fustes.length - 1) };
+}
+
 function labelEstrato(est) {
   const fito = rotuloFito(est.fitofisionomia);
   const tag = ehHerbaceo(est) ? ' <span class="badge tag-herb">🌱 herbáceo</span>' : "";
@@ -534,7 +589,7 @@ function cardEstrato(inv, r, comp) {
   let erro;
   if (ehCenso(r.estrato)) {
     const cc = resultadosCenso(inv, r.estrato.id);
-    erro = `<div class="estrato-stats">🗺️ censo · <b>${cc.nPontos}</b> ponto(s) · riqueza <b>${cc.riqueza}</b> · ${fmtNum(cc.volAereo, 3)} m³</div>`;
+    erro = `<div class="estrato-stats">🗺️ censo · <b>${cc.nPontos}</b> ponto(s) · riqueza <b>${cc.riqueza}</b> · vol ${fmtNum(cc.volAereo, 3)} m³</div>`;
   } else if (ehHerbaceo(r.estrato)) {
     const h = resultadosHerbaceo(inv, r.estrato.id);
     erro = `<div class="estrato-stats">${h.nParcelas} parcela(s) 1×1 m · riqueza <b>${h.riqueza}</b> táxon(s)${h.covTotal ? ` · nativa <b>${fmtNum(h.covNativaRelPct, 0)}%</b> / exót.+rud. <b>${fmtNum(h.covExoticaRelPct, 0)}%</b> da cobertura` : ""}</div>`;
@@ -720,8 +775,8 @@ function telaExportar(invId) {
 // "mapa" e "especies" são só abas (não criam estrato).
 const WIZARD_OPCOES = [
   { k: "censo", emoji: "🌳", tit: "Censo de árvores", desc: "Pontos no mapa com placa, CAP e altura", estratoMetodo: "censo" },
-  { k: "arboreo", emoji: "🌲", tit: "Parcelas de floresta (FES)", desc: "Parcelas com CAP / altura / volume", estratoMetodo: "arboreo" },
-  { k: "herbaceo", emoji: "🌱", tit: "Parcelas de cerrado / herbáceo", desc: "Parcelas 1×1 m, Braun-Blanquet", estratoMetodo: "herbaceo" },
+  { k: "arboreo", emoji: "🌲", tit: "Parcelas de arbóreas em vegetação nativa", desc: "Parcelas com CAP / altura / volume", estratoMetodo: "arboreo" },
+  { k: "herbaceo", emoji: "🌱", tit: "Parcelas do estrato herbáceo", desc: "Parcelas 1×1 m, Braun-Blanquet", estratoMetodo: "herbaceo" },
   { k: "especies", emoji: "🌿", tit: "Lista de espécies", desc: "Só registrar as espécies encontradas" },
   { k: "mapa", emoji: "🗺️", tit: "Mapa", desc: "Desenhar áreas e pegar pontos, sem medir árvores" },
 ];
@@ -780,19 +835,14 @@ function telaConfig() {
   const estratosHtml = inv.estratos.map((e) => `<div class="estrato-edit" data-est="${e.id}">
     <div class="estrato-titulo">${esc((e.nomeCustom || "").trim() || rotuloFito(e.fitofisionomia))}${ehHerbaceo(e) ? " · herbáceo" : ehCenso(e) ? " · censo" : (e.estagio ? " — " + esc(e.estagio) : "")}</div>
     <label>Nome do estrato <small>(opcional — ex.: nome do polígono)</small><input class="e-nome" data-est="${e.id}" value="${esc(e.nomeCustom || "")}" placeholder="${esc(rotuloFito(e.fitofisionomia))}" autocomplete="off"></label>
-    <label>Método de levantamento<select class="e-metodo" data-est="${e.id}">${metodoOpts(e.metodo)}</select></label>
     <div class="linha2">
-      <label>Fitofisionomia<select class="e-fito" data-est="${e.id}">${fitoOpts(e.fitofisionomia, e.metodo)}</select></label>
+      <label>Fitofisionomia / uso do solo<select class="e-fito" data-est="${e.id}">${fitoOpts(e.fitofisionomia, e.metodo)}</select></label>
       <label>Estágio sucessional<select class="e-estagio" data-est="${e.id}">${estagioOpts(e.estagio)}</select></label>
     </div>
-    <div class="linha2">
-      ${ehHerbaceo(e)
-        ? '<div class="info" style="flex:1;margin:0">Parcela <b>1×1 m</b>; cobertura por classe Braun-Blanquet. CONAMA 423 (pós-campo).</div>'
-        : ehCenso(e)
-        ? '<div class="info" style="flex:1;margin:0">Censo: <b>pontos no mapa</b> (sem parcela, sem erro amostral). Volume pela equação do fito.</div>'
-        : `<label>Área total (ha)<input type="number" step="0.0001" class="e-area" data-est="${e.id}" value="${e.areaTotalHa ?? ""}"></label>`}
-      ${inv.estratos.length > 1 ? `<button class="perigo del-est" data-est="${e.id}">🗑</button>` : ""}
-    </div></div>`).join("");
+    ${e.metodo === "arboreo" ? `<label class="campo">Área total (ha)<input type="number" step="0.0001" class="e-area" data-est="${e.id}" value="${e.areaTotalHa ?? ""}"></label>` : ""}
+    ${ehHerbaceo(e) ? '<div class="info" style="margin:6px 0 0">Parcela <b>1×1 m</b>; cobertura Braun-Blanquet (CONAMA 423, pós-campo).</div>' : ""}
+    ${inv.estratos.length > 1 ? `<div class="linha2"><span style="flex:1"></span><button class="perigo del-est" data-est="${e.id}">🗑 Excluir estrato</button></div>` : ""}
+  </div>`).join("");
 
   app.innerHTML = `${header("Configuração", () => telaInventario(inv.id))}
     <main class="form">
@@ -800,7 +850,7 @@ function telaConfig() {
         <input id="cfg-nome" value="${esc(inv.nome)}"></label>
 
       <h3>Estratos</h3>
-      <div class="info">Cada estrato = uma <b>fitofisionomia + estágio</b>. Adicione quantos precisar (ex.: Mata FES Inicial, Mata FES Médio, Cerradão…). Cada parcela é vinculada a um estrato.</div>
+      <div class="info">Cada <b>estrato</b> pode ser uma fitofisionomia/uso do solo, um estágio sucessional, ou uma área de localização diferente — tudo no mesmo projeto. Adicione quantos precisar.</div>
       <div id="estratos">${estratosHtml}</div>
       <button class="btn-sec" id="add-est">+ Adicionar estrato</button>
       ${temArboreo ? `
@@ -1316,17 +1366,7 @@ function telaIndividuo(parcelaId, individuoId) {
     </main>`;
   ligarVoltar(() => telaParcela(parcelaId));
 
-  function renderFustes() {
-    $("#fustes").innerHTML = ind.fustes.map((f, i) => `<div class="fuste-linha" data-i="${i}">
-      <span class="fuste-num">${i + 1}</span>
-      <input class="f-cap" data-i="${i}" type="number" step="0.1" inputmode="decimal" placeholder="CAP" value="${f.capCm ?? ""}">
-      <input class="f-alt" data-i="${i}" type="number" step="0.1" inputmode="decimal" placeholder="Altura" value="${f.alturaM ?? ""}">
-      ${ind.fustes.length > 1 ? `<button class="perigo f-del" data-i="${i}">✕</button>` : "<span></span>"}
-    </div>`).join("");
-    $$(".f-cap").forEach((el) => { el.oninput = () => { ind.fustes[+el.dataset.i].capCm = parseFloat(el.value) || null; volVivo(); agendarSalvar(); }; });
-    $$(".f-alt").forEach((el) => { el.oninput = () => { ind.fustes[+el.dataset.i].alturaM = parseFloat(el.value) || null; volVivo(); agendarSalvar(); }; });
-    $$(".f-del").forEach((el) => { el.onclick = async () => { ind.fustes.splice(+el.dataset.i, 1); await salvarJa(); renderFustes(); volVivo(); }; });
-  }
+  let fustesCtrl = null; // teclado fluido (instalado no setup da tela, abaixo)
   function volVivo() {
     // médias da parcela (DAP e altura) recalculadas ao vivo a cada CAP/altura
     const mp = mediasParcela(p);
@@ -1391,7 +1431,8 @@ function telaIndividuo(parcelaId, individuoId) {
       el.onclick = async () => { await salvarJa(); telaIndividuo(parcelaId, el.dataset.troca); };
     });
   }
-  renderFustes(); volVivo(); renderListaIndividuos();
+  fustesCtrl = instalarFustes($("#fustes"), ind.fustes, "f", novoFuste, () => { volVivo(); agendarSalvar(); });
+  volVivo(); renderListaIndividuos();
 
   $("#i-placa").oninput = (e) => { ind.placa = e.target.value; agendarSalvar(); renderListaIndividuos(); };
   // não polui a lista com digitação parcial — as opções derivam dos indivíduos
@@ -1412,7 +1453,7 @@ function telaIndividuo(parcelaId, individuoId) {
   };
   $("#i-foto").onclick = () => fotoInd(false);
   $("#i-gal").onclick = () => fotoInd(true);
-  $("#add-fuste").onclick = async () => { ind.fustes.push(novoFuste()); await salvarJa(); renderFustes(); volVivo(); };
+  $("#add-fuste").onclick = () => fustesCtrl && fustesCtrl.addFuste();
   $("#del-ind").onclick = async () => {
     if (confirm("Excluir este indivíduo?")) {
       p.individuos = p.individuos.filter((x) => x.id !== ind.id);
@@ -1423,6 +1464,12 @@ function telaIndividuo(parcelaId, individuoId) {
     }
   };
   $("#prox-ind").onclick = async () => {
+    const faltando = [];
+    if (!String(ind.placa || "").trim()) faltando.push("placa");
+    if (!(ind.especie || "").trim()) faltando.push("espécie");
+    if (!ind.fustes.some((f) => f.capCm != null)) faltando.push("CAP");
+    if (!ind.fustes.some((f) => f.alturaM != null)) faltando.push("altura");
+    if (faltando.length && !confirm(`Faltando preencher: ${faltando.join(", ")}.\n\nSalvar e ir pro próximo mesmo assim?`)) return;
     await salvarJa();
     const novo = novoIndividuo("");
     p.individuos.push(novo);
@@ -2732,18 +2779,21 @@ async function telaCenso(estratoId, modo = "censo") {
   };
   // Exportar camadas: seletor (pontos / polígonos desenhados / polígonos de visualização).
   // Só mostra a opção que tem dado. Usa a mesma barra do importar (#censo-barra).
+  let _exportCompart = false; // modo: false=baixar, true=compartilhar (WhatsApp/Drive)
   $("#censo-exportar").onclick = () => {
     const barra = $("#censo-barra"); barra.hidden = false; mostrarAdd(false);
     const opts = [];
     if (temPontosCenso(inv)) opts.push('<button class="btn-sec" id="exp-pontos">📍 Pontos (KMZ)</button>', '<button class="btn-sec" id="exp-pontos-x">📊 Pontos (XLSX)</button>');
     if (temFitos(inv)) opts.push('<button class="btn-sec" id="exp-fitos">▱ Polígonos desenhados</button>');
     if (temGeoRefs(inv)) opts.push('<button class="btn-sec" id="exp-refs">👁️ Polígonos de visualização</button>');
-    barra.innerHTML = `<span class="barra-tit">Exportar:</span>${opts.join("") || '<span class="barra-tit">Nada pra exportar ainda.</span>'}<button class="btn-foto" id="exp-cancel">✕</button>`;
+    const lblModo = () => _exportCompart ? "📲 Compartilhar" : "⬇ Baixar";
+    barra.innerHTML = `<span class="barra-tit">Exportar:</span><button class="btn-foto" id="exp-modo" title="Trocar baixar/compartilhar">${lblModo()}</button>${opts.join("") || '<span class="barra-tit">Nada pra exportar ainda.</span>'}<button class="btn-foto" id="exp-cancel">✕</button>`;
     const fechar = () => { barra.hidden = true; barra.innerHTML = ""; mostrarAdd(true); };
-    if ($("#exp-pontos")) $("#exp-pontos").onclick = () => { exportarPontosKMZ(inv); fechar(); };
-    if ($("#exp-pontos-x")) $("#exp-pontos-x").onclick = () => { exportarCensoXLSX(inv); fechar(); };
-    if ($("#exp-fitos")) $("#exp-fitos").onclick = () => { exportarFitosKMZ(inv); fechar(); };
-    if ($("#exp-refs")) $("#exp-refs").onclick = () => { exportarGeoRefsKMZ(inv); fechar(); };
+    $("#exp-modo").onclick = () => { _exportCompart = !_exportCompart; $("#exp-modo").textContent = lblModo(); };
+    if ($("#exp-pontos")) $("#exp-pontos").onclick = () => { exportarPontosKMZ(inv, _exportCompart); fechar(); };
+    if ($("#exp-pontos-x")) $("#exp-pontos-x").onclick = () => { exportarCensoXLSX(inv, _exportCompart); fechar(); };
+    if ($("#exp-fitos")) $("#exp-fitos").onclick = () => { exportarFitosKMZ(inv, _exportCompart); fechar(); };
+    if ($("#exp-refs")) $("#exp-refs").onclick = () => { exportarGeoRefsKMZ(inv, _exportCompart); fechar(); };
     $("#exp-cancel").onclick = fechar;
   };
   $("#kml-file").onchange = async (e) => {
@@ -3001,12 +3051,6 @@ async function telaCenso(estratoId, modo = "censo") {
   function abrirFormPonto(pt, ehNovo) {
     const painel = $("#censo-painel");
     mostrarAdd(false);
-    const fustesHtml = () => pt.fustes.map((f, i) => `<div class="fuste-linha" data-i="${i}">
-      <span class="fuste-num">${i + 1}</span>
-      <input class="cf-cap" data-i="${i}" type="number" step="0.1" inputmode="decimal" placeholder="CAP" value="${f.capCm ?? ""}">
-      <input class="cf-alt" data-i="${i}" type="number" step="0.1" inputmode="decimal" placeholder="Altura" value="${f.alturaM ?? ""}">
-      ${pt.fustes.length > 1 ? `<button class="perigo cf-fdel" data-i="${i}">✕</button>` : "<span></span>"}
-    </div>`).join("");
     painel.innerHTML = `<div class="censo-form">
       <div class="censo-form-top">
         <b>${ehNovo ? "Novo ponto" : "Editar ponto"}</b>
@@ -3024,7 +3068,7 @@ async function telaCenso(estratoId, modo = "censo") {
           <div class="ac-lista" id="cf-esp-lista" hidden></div>
         </div></label>
       <h3>Fustes <small>(CAP cm · altura m)</small></h3>
-      <div id="cf-fustes">${fustesHtml()}</div>
+      <div id="cf-fustes"></div>
       <button class="btn-sec" id="cf-addfuste">+ Fuste</button>
       <div class="acoes-linha">
         <button class="btn-grande destaque" id="cf-salvar">✓ Salvar</button>
@@ -3037,12 +3081,7 @@ async function telaCenso(estratoId, modo = "censo") {
         setTimeout(() => { try { e.target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (er) { /* */ } }, 250);
       }
     });
-    const ligarFustes = () => {
-      $$(".cf-cap").forEach((el) => { el.oninput = () => { pt.fustes[+el.dataset.i].capCm = parseFloat(el.value) || null; }; });
-      $$(".cf-alt").forEach((el) => { el.oninput = () => { pt.fustes[+el.dataset.i].alturaM = parseFloat(el.value) || null; }; });
-      $$(".cf-fdel").forEach((el) => { el.onclick = () => { pt.fustes.splice(+el.dataset.i, 1); $("#cf-fustes").innerHTML = fustesHtml(); ligarFustes(); }; });
-    };
-    ligarFustes();
+    const cfFustes = instalarFustes($("#cf-fustes"), pt.fustes, "cf", novoFuste, () => {});
     $("#cf-placa").oninput = (e) => { pt.placa = e.target.value; };
     const setEsp = (v) => { pt.especie = v; };
     $("#cf-especie").oninput = (e) => setEsp(e.target.value);
@@ -3056,7 +3095,7 @@ async function telaCenso(estratoId, modo = "censo") {
     };
     $("#cf-foto").onclick = () => fotoPonto(false);
     $("#cf-gal").onclick = () => fotoPonto(true);
-    $("#cf-addfuste").onclick = () => { pt.fustes.push(novoFuste()); $("#cf-fustes").innerHTML = fustesHtml(); ligarFustes(); };
+    $("#cf-addfuste").onclick = () => cfFustes.addFuste();
     $("#cf-mover").onclick = async () => {
       const c = map.getCenter();
       pt.lat = c.lat; pt.lon = c.lng;
@@ -3067,6 +3106,12 @@ async function telaCenso(estratoId, modo = "censo") {
     const fechar = () => { painel.innerHTML = ""; mostrarAdd(true); };
     $("#cf-fechar").onclick = fechar;
     $("#cf-salvar").onclick = async () => {
+      const faltando = [];
+      if (!String(pt.placa || "").trim()) faltando.push("placa");
+      if (!(pt.especie || "").trim()) faltando.push("espécie");
+      if (!pt.fustes.some((f) => f.capCm != null)) faltando.push("CAP");
+      if (!pt.fustes.some((f) => f.alturaM != null)) faltando.push("altura");
+      if (faltando.length && !confirm(`Faltando preencher: ${faltando.join(", ")}.\n\nSalvar mesmo assim?`)) return;
       if (ehNovo && !est.pontos.includes(pt)) est.pontos.push(pt);
       if ((pt.especie || "").trim()) adicionarEspecie(inv, pt.especie.trim());
       await salvarJa();
