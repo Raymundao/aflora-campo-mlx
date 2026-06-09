@@ -325,6 +325,12 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .wz-op { cursor: pointer; }
 .wz-op.sel { outline: 2px solid var(--verde); outline-offset: -2px; }
 .wz-op .wz-check { font-size: 20px; line-height: 1; color: var(--verde); }
+/* tela de bloqueio (controle de acesso por código com validade) */
+.bloqueio { text-align: center; max-width: 380px; margin: 0 auto; padding-top: 12vh; }
+.bloqueio-logo { font-size: 64px; line-height: 1; }
+.bloqueio-tit { margin: 6px 0 10px; }
+.bloqueio .campo input { text-align: center; letter-spacing: 1px; text-transform: uppercase; }
+.bloqueio-aviso { color: #c62828; font-weight: 600; min-height: 1.2em; margin-top: 8px; }
 /* régua de medição: overlay SVG por cima do mapa, sempre colada na mira */
 .censo-regua { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 590; pointer-events: none; }
 .censo-regua line { stroke: #1565C0; stroke-width: 2; stroke-opacity: .9; }

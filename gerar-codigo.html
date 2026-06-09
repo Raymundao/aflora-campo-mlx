@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aflora Campo · Gerador de código de acesso</title>
+  <style>
+    :root { --verde: #2e7d32; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #f4f6f4; color: #222;
+      display: flex; min-height: 100vh; align-items: flex-start; justify-content: center; padding: 24px; }
+    .card { background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,.12); padding: 22px; max-width: 460px; width: 100%; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    p.sub { color: #666; margin: 0 0 18px; font-size: 14px; }
+    label { display: block; font-weight: 600; margin: 14px 0 6px; font-size: 14px; }
+    input[type="date"] { width: 100%; padding: 10px; font-size: 16px; border: 1px solid #bbb; border-radius: 8px; }
+    .codigo { margin-top: 18px; padding: 16px; background: #e8f5e9; border: 1px dashed var(--verde); border-radius: 10px;
+      text-align: center; font-size: 22px; font-weight: 800; letter-spacing: 1px; color: #1b5e20; word-break: break-all; }
+    button { margin-top: 12px; width: 100%; padding: 12px; font-size: 16px; font-weight: 700; color: #fff;
+      background: var(--verde); border: 0; border-radius: 10px; cursor: pointer; }
+    button:active { background: #1b5e20; }
+    .nota { margin-top: 16px; font-size: 13px; color: #555; line-height: 1.5; }
+    .atalhos { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .atalhos button { width: auto; padding: 7px 12px; font-size: 13px; background: #eee; color: #333; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🌳 Código de acesso — Aflora Campo</h1>
+    <p class="sub">Escolha até quando a pessoa pode usar o app. Copie o código e mande pra ela (WhatsApp). Ela digita uma vez e usa livre até essa data.</p>
+    <label for="data">Válido até</label>
+    <input type="date" id="data">
+    <div class="atalhos">
+      <button data-dias="7">+7 dias</button>
+      <button data-dias="15">+15 dias</button>
+      <button data-dias="30">+30 dias</button>
+      <button data-dias="90">+90 dias</button>
+      <button data-dias="3650">~10 anos (time)</button>
+    </div>
+    <div class="codigo" id="codigo">—</div>
+    <button id="copiar">📋 Copiar código</button>
+    <p class="nota">O código embute a data de validade. Depois dela, o app pede um código novo. O seu time (já com projetos no aparelho) nunca vê essa tela — só instalação nova precisa de código.</p>
+  </div>
+  <script>
+    const SALT = "afloracampo-acesso-2026-9f3c7";
+    function chk(ymd) {
+      let h = 2166136261 | 0;
+      const s = String(ymd) + SALT;
+      for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+      return (h >>> 0).toString(36).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5).padStart(5, "X");
+    }
+    const $ = (s) => document.querySelector(s);
+    function ymdDaData(d) { return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
+    function atualizar() {
+      const v = $("#data").value; // YYYY-MM-DD
+      if (!v) { $("#codigo").textContent = "—"; return; }
+      const ymd = parseInt(v.replace(/-/g, ""), 10);
+      $("#codigo").textContent = "AFLORA-" + ymd + "-" + chk(ymd);
+    }
+    $("#data").addEventListener("input", atualizar);
+    document.querySelectorAll(".atalhos button").forEach((b) => {
+      b.onclick = () => {
+        const d = new Date(); d.setDate(d.getDate() + (+b.dataset.dias));
+        $("#data").value = d.toISOString().slice(0, 10);
+        atualizar();
+      };
+    });
+    $("#copiar").onclick = async () => {
+      const t = $("#codigo").textContent;
+      if (t === "—") return;
+      try { await navigator.clipboard.writeText(t); $("#copiar").textContent = "✓ Copiado!"; setTimeout(() => $("#copiar").textContent = "📋 Copiar código", 1500); }
+      catch (e) { alert("Copie manualmente: " + t); }
+    };
+    // default: 15 dias
+    (function () { const d = new Date(); d.setDate(d.getDate() + 15); $("#data").value = d.toISOString().slice(0, 10); atualizar(); })();
+  </script>
+</body>
+</html>

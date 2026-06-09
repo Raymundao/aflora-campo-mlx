@@ -25,7 +25,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v15"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v16"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -3094,6 +3094,62 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// ============================================================
+// CONTROLE DE ACESSO — código com validade (honor-system, client-side).
+// O time já instalado (tem projetos) é "grandfathered" e nunca vê a trava.
+// Instalação NOVA (ex.: biólogo contratado) precisa de um código com data
+// embutida. Sem backend = não é à prova de hacker, mas resolve o caso de uso.
+// Gerador de códigos: gerar-codigo.html (mesma função de checksum).
+// ============================================================
+const EXIGIR_CODIGO = true;
+const _ACESSO_SALT = "afloracampo-acesso-2026-9f3c7";
+function _chkCodigo(ymd) {
+  let h = 2166136261 | 0;
+  const s = String(ymd) + _ACESSO_SALT;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(36).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5).padStart(5, "X");
+}
+function _hojeYMD() { const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
+function validarCodigo(entrada) {
+  const t = String(entrada || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const m = t.match(/AFLORA(\d{8})([A-Z0-9]{5})/);
+  if (!m) return null;
+  if (_chkCodigo(m[1]) !== m[2]) return null;
+  return parseInt(m[1], 10); // YYYYMMDD de validade
+}
+function lerAcesso() {
+  try {
+    const raw = localStorage.getItem("aflora_acesso");
+    if (!raw) return { status: "none" };
+    const a = JSON.parse(raw);
+    if (a.tipo === "perm") return { status: "valid" };
+    if (a.tipo === "data") return { status: _hojeYMD() <= a.expira ? "valid" : "expired", expira: a.expira };
+    return { status: "none" };
+  } catch (e) { return { status: "none" }; }
+}
+function salvarAcesso(o) { try { localStorage.setItem("aflora_acesso", JSON.stringify(o)); } catch (e) { /* */ } }
+function fmtYMD(ymd) { const s = String(ymd); return `${s.slice(6, 8)}/${s.slice(4, 6)}/${s.slice(0, 4)}`; }
+function telaBloqueio(msg) {
+  voltarAtual = null;
+  app.innerHTML = `<main class="form bloqueio">
+    <div class="bloqueio-logo">🌳</div>
+    <h1 class="bloqueio-tit">Aflora Campo</h1>
+    <p class="info">${esc(msg || "Digite o código de acesso pra liberar o app.")}</p>
+    <label class="campo">Código de acesso<input id="bl-codigo" autocomplete="off" placeholder="AFLORA-AAAAMMDD-XXXXX"></label>
+    <button class="btn-grande destaque" id="bl-ok">Liberar</button>
+    <p class="bloqueio-aviso" id="bl-aviso"></p>
+  </main>`;
+  const tentar = () => {
+    const exp = validarCodigo($("#bl-codigo").value);
+    if (!exp) { $("#bl-aviso").textContent = "Código inválido. Confira com quem te passou."; return; }
+    if (_hojeYMD() > exp) { $("#bl-aviso").textContent = `Esse código expirou (validade ${fmtYMD(exp)}).`; return; }
+    salvarAcesso({ tipo: "data", expira: exp });
+    telaInventarios();
+  };
+  $("#bl-ok").onclick = tentar;
+  $("#bl-codigo").addEventListener("keydown", (e) => { if (e.key === "Enter") tentar(); });
+}
+
 async function iniciar() {
   await db.pedirPersistencia();
   if ("serviceWorker" in navigator) {
@@ -3108,6 +3164,16 @@ async function iniciar() {
       recarregando = true;
       location.reload();
     });
+  }
+  // GATE de acesso (não trava quem já usa o app: grandfathered por ter projetos)
+  if (EXIGIR_CODIGO) {
+    const ac = lerAcesso();
+    if (ac.status === "valid") { telaInventarios(); return; }
+    if (ac.status === "expired") { telaBloqueio(`Seu acesso expirou em ${fmtYMD(ac.expira)}. Digite um código válido.`); return; }
+    const temDados = (await db.listarInventarios()).length > 0;
+    if (temDados) { salvarAcesso({ tipo: "perm" }); telaInventarios(); return; } // usuário/time existente
+    telaBloqueio(); // instalação nova → precisa de código
+    return;
   }
   telaInventarios();
 }
