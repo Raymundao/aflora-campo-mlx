@@ -247,7 +247,7 @@ const blobHerbXLSX = (inv) => gerarXlsx(inventarioHerbaceoParaMatriz(inv), "Herb
 export function exportarHerbaceoXLSX(inv) { baixar(`${slug(inv.nome)}_herbaceo.xlsx`, blobHerbXLSX(inv), MIME.xlsx); }
 export function exportarHerbaceoCSV(inv) { baixar(`${slug(inv.nome)}_herbaceo.csv`, inventarioHerbaceoParaCSV(inv), MIME.csv); }
 
-export function exportarCensoXLSX(inv, compart) { _entregar(compart, `${slug(inv.nome)}_censo.xlsx`, gerarXlsx(inventarioCensoParaMatriz(inv), "Censo"), MIME.xlsx); }
+export function exportarCensoXLSX(inv) { baixar(`${slug(inv.nome)}_censo.xlsx`, gerarXlsx(inventarioCensoParaMatriz(inv), "Censo"), MIME.xlsx); }
 
 // blobs/strings p/ montar o backup completo do projeto (1 ZIP com tudo)
 export function blobXLSXInventario(inv) { return gerarXlsx(inventarioParaMatriz(inv), "Inventario"); }
@@ -304,23 +304,14 @@ function _marksGeoRefs(inv) {
 export function temPontosCenso(inv) { return pontosCenso(inv).some(({ pt }) => pt.lat != null && pt.lon != null); }
 export function temFitos(inv) { return (inv.fitos || []).some((p) => p.coords && p.coords.length >= 3); }
 export function temGeoRefs(inv) { return (inv.geoRefs || []).length > 0; }
-// entrega o arquivo: compartilha (Web Share → WhatsApp/Drive) ou baixa. O blob é
-// montado ANTES (síncrono) pra preservar o gesto do usuário no navigator.share.
-function _entregar(compart, nome, dados, mime) {
-  if (compart && navigator.share) {
-    compartilhar(nome, dados, mime).then((r) => { if (!r.ok) baixar(nome, dados, mime); });
-  } else {
-    baixar(nome, dados, mime);
-  }
+export function exportarPontosKMZ(inv) {
+  baixar(`${slug(inv.nome)}_pontos.kmz`, criarZip([{ nome: "doc.kml", dados: _kmlDoc(`${inv.nome} — pontos`, _marksPontos(inv)) }]), "application/vnd.google-earth.kmz");
 }
-export function exportarPontosKMZ(inv, compart) {
-  _entregar(compart, `${slug(inv.nome)}_pontos.kmz`, criarZip([{ nome: "doc.kml", dados: _kmlDoc(`${inv.nome} — pontos`, _marksPontos(inv)) }]), "application/vnd.google-earth.kmz");
+export function exportarFitosKMZ(inv) {
+  baixar(`${slug(inv.nome)}_poligonos.kmz`, criarZip([{ nome: "doc.kml", dados: _kmlDoc(`${inv.nome} — polígonos desenhados`, _marksFitos(inv)) }]), "application/vnd.google-earth.kmz");
 }
-export function exportarFitosKMZ(inv, compart) {
-  _entregar(compart, `${slug(inv.nome)}_poligonos.kmz`, criarZip([{ nome: "doc.kml", dados: _kmlDoc(`${inv.nome} — polígonos desenhados`, _marksFitos(inv)) }]), "application/vnd.google-earth.kmz");
-}
-export function exportarGeoRefsKMZ(inv, compart) {
-  _entregar(compart, `${slug(inv.nome)}_referencias.kmz`, criarZip([{ nome: "doc.kml", dados: _kmlDoc(`${inv.nome} — referências`, _marksGeoRefs(inv)) }]), "application/vnd.google-earth.kmz");
+export function exportarGeoRefsKMZ(inv) {
+  baixar(`${slug(inv.nome)}_referencias.kmz`, criarZip([{ nome: "doc.kml", dados: _kmlDoc(`${inv.nome} — referências`, _marksGeoRefs(inv)) }]), "application/vnd.google-earth.kmz");
 }
 
 // Compartilha o XLSX; se não suportado, baixa. Retorna { ok, motivo }.
