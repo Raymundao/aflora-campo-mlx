@@ -16,6 +16,10 @@ export const EQUACOES_VOLUME = {
   mata_fed:   { a: 0.000074230, b: 1.707348, c: 1.16873,  r2: 0.973, rotulo: "Mata (FED)", conama: "fed" },
   cerradao:   { a: 0.000094001, b: 1.830398, c: 0.960913, r2: 0.964, rotulo: "Cerradão", conama: "cerrado" },
   cerrado_sr: { a: 0.000065661, b: 2.475293, c: 0.300022, r2: 0.981, rotulo: "Cerrado sensu restrito", conama: "cerrado" },
+  // Classe de USO DO SOLO (não é fitofisionomia nativa): árvores isoladas em área
+  // antropizada/pasto/etc. Volume pela equação de mata como padrão (ajustável por
+  // estrato via coefsCustom). Sem classificação de estágio CONAMA.
+  isoladas:   { a: 0.000074230, b: 1.707348, c: 1.16873,  r2: 0.973, rotulo: "Árvores isoladas", conama: "fes_fod" },
 };
 
 export const dapDeCap = (capCm) => capCm / Math.PI;

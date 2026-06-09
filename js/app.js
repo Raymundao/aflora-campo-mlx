@@ -25,7 +25,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v17"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v18"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -313,7 +313,11 @@ function iconeRefPonto(forma, tam, cor) {
 function labelEstrato(est) {
   const fito = rotuloFito(est.fitofisionomia);
   const tag = ehHerbaceo(est) ? ' <span class="badge tag-herb">🌱 herbáceo</span>' : "";
-  return `<b>${esc(fito)}</b>${tag}${est.estagio ? ` <small>· estágio ${esc(est.estagio)}</small>` : (ehHerbaceo(est) ? "" : " <small>· sem estágio</small>")}`;
+  const nc = (est.nomeCustom || "").trim();
+  // nome custom (ex.: nome do polígono do KML) em destaque, fito como subtítulo;
+  // sem nome custom, mostra o fito. "sem estágio" não aparece mais (item 5).
+  if (nc) return `<b>${esc(nc)}</b>${tag} <small>· ${esc(fito)}${est.estagio ? " · " + esc(est.estagio) : ""}</small>`;
+  return `<b>${esc(fito)}</b>${tag}${est.estagio ? ` <small>· estágio ${esc(est.estagio)}</small>` : ""}`;
 }
 
 function barraErro(r, alvo) {
@@ -355,22 +359,30 @@ async function telaInventario(id) {
     ? resultados.map((r) => cardEstrato(inv, r, completudeEstrato(inv, r.estrato, r, fotos))).join("")
     : '<p class="vazio">Nenhum estrato. Toque em ⚙ Config pra adicionar.</p>';
 
+  // Visibilidade das abas por módulo escolhido no wizard (config.modulos).
+  // Legado (modulos null/undefined) → mostra tudo. Mapa só se escolheu "mapa";
+  // Espécies se escolheu especies/censo/arboreo/herbaceo.
+  const mods = inv.config?.modulos;
+  const temMapa = !mods || mods.includes("mapa");
+  const temEspecies = !mods || mods.some((m) => ["especies", "censo", "arboreo", "herbaceo"].includes(m));
   app.innerHTML = `${header(inv.nome, telaInventarios)}
     <main>
       <div class="seg-nav">
         <button class="seg ativo">📋 Amostragem</button>
-        <button class="seg" id="ir-especies">🌿 Espécies</button>
-        <button class="seg" id="ir-fitos">🗺️ Mapa</button>
+        ${temEspecies ? '<button class="seg" id="ir-especies">🌿 Espécies</button>' : ""}
+        ${temMapa ? '<button class="seg" id="ir-fitos">🗺️ Mapa</button>' : ""}
       </div>
-      <div class="acoes-linha"><button class="btn-sec largo" id="cfg">⚙ Config (estratos, área, erro)</button></div>
       <div class="cards">${estratosHtml}</div>
+      ${inv.estratos.length ? "" : '<button class="btn-sec largo" id="cfg-add">⚙ Configurar / adicionar estrato</button>'}
       <button class="btn-sec largo" id="ir-exportar">📤 Exportar / Compartilhar</button>
     </main>`;
   ligarVoltar(telaInventarios);
-  $("#cfg").onclick = telaConfig;
-  $("#ir-especies").onclick = () => telaEspecies(inv.id);
-  $("#ir-fitos").onclick = () => telaCenso(null, "fitos");
+  if ($("#ir-especies")) $("#ir-especies").onclick = () => telaEspecies(inv.id);
+  if ($("#ir-fitos")) $("#ir-fitos").onclick = () => telaCenso(null, "fitos");
+  if ($("#cfg-add")) $("#cfg-add").onclick = telaConfig;
   $("#ir-exportar").onclick = () => telaExportar(inv.id);
+  // ⚙ discreto no card abre a Config (sem disparar a abertura do estrato)
+  $$("[data-cfg-estrato]").forEach((el) => { el.onclick = (ev) => { ev.stopPropagation(); telaConfig(); }; });
   $$("[data-estrato]").forEach((el) => {
     el.onclick = () => {
       const e = inv.estratos.find((x) => x.id === el.dataset.estrato);
@@ -538,6 +550,7 @@ function cardEstrato(inv, r, comp) {
       <div class="estrato-stats">erro <b>${fmtNum(e, 2)}%</b> (alvo ${fmtNum(alvo, 0)}%) · ${r.nParcelas} parc. <small>(precisa ~${Math.ceil(r.erro.n_estrela)})</small></div>`;
   }
   return `<div class="card estrato-card" data-estrato="${r.estrato.id}">
+    <button class="estrato-cfg" data-cfg-estrato="${r.estrato.id}" title="Configurar estrato" aria-label="Configurar">⚙</button>
     <div class="estrato-nome">${labelEstrato(r.estrato)} <span class="seta-ir">›</span></div>
     ${erro}
     ${barraCompletude(comp)}
@@ -703,11 +716,14 @@ function telaExportar(invId) {
 // WIZARD — "o que você vai fazer?" ao criar projeto novo (mais didático que cair
 // direto na Config). Cria os estratos com o método certo e guarda config.modulos.
 // ============================================================
+// estratoMetodo: só os que viram estrato de levantamento criam estrato.
+// "mapa" e "especies" são só abas (não criam estrato).
 const WIZARD_OPCOES = [
-  { k: "censo", emoji: "🌳", tit: "Censo de árvores", desc: "Pontos no mapa com placa, CAP e altura", metodo: "censo" },
-  { k: "arboreo", emoji: "🌲", tit: "Parcelas de floresta (FES)", desc: "Parcelas com CAP / altura / volume", metodo: "arboreo" },
-  { k: "herbaceo", emoji: "🌱", tit: "Parcelas de cerrado / herbáceo", desc: "Parcelas 1×1 m, Braun-Blanquet", metodo: "herbaceo" },
-  { k: "mapa", emoji: "🗺️", tit: "Só mapa", desc: "Desenhar áreas e pegar pontos, sem medir árvores", metodo: "censo" },
+  { k: "censo", emoji: "🌳", tit: "Censo de árvores", desc: "Pontos no mapa com placa, CAP e altura", estratoMetodo: "censo" },
+  { k: "arboreo", emoji: "🌲", tit: "Parcelas de floresta (FES)", desc: "Parcelas com CAP / altura / volume", estratoMetodo: "arboreo" },
+  { k: "herbaceo", emoji: "🌱", tit: "Parcelas de cerrado / herbáceo", desc: "Parcelas 1×1 m, Braun-Blanquet", estratoMetodo: "herbaceo" },
+  { k: "especies", emoji: "🌿", tit: "Lista de espécies", desc: "Só registrar as espécies encontradas" },
+  { k: "mapa", emoji: "🗺️", tit: "Mapa", desc: "Desenhar áreas e pegar pontos, sem medir árvores" },
 ];
 function telaWizard() {
   const sel = new Set();
@@ -737,9 +753,10 @@ function telaWizard() {
     const picks = WIZARD_OPCOES.filter((o) => sel.has(o.k));
     if (picks.length) {
       inv.config.modulos = picks.map((o) => o.k);
-      // cria 1 estrato por método escolhido (dedup: "censo" e "mapa" usam método censo)
-      const metodos = [...new Set(picks.map((o) => o.metodo))];
-      inv.estratos = metodos.map((m) => novoEstrato("mata_fes", "", m));
+      // cria 1 estrato só pros métodos de levantamento (censo/arbóreo/herbáceo);
+      // mapa e espécies não criam estrato.
+      const metodos = [...new Set(picks.filter((o) => o.estratoMetodo).map((o) => o.estratoMetodo))];
+      inv.estratos = metodos.map((m) => novoEstrato(m === "herbaceo" ? "cerrado_sr" : "mata_fes", "", m));
     }
     await db.salvarInventario(inv);
     telaConfig(); // ajuste fino (fitofisionomia, tamanho de parcela, erro) com método já pré-definido
@@ -751,6 +768,9 @@ function telaWizard() {
 // ============================================================
 function telaConfig() {
   const c = inv.config;
+  // Parcela/erro amostral só fazem sentido p/ ARBÓREO. Censo (pontos) e herbáceo
+  // (1×1 m fixo) não usam → escondemos essas seções (item 2b).
+  const temArboreo = inv.estratos.some((e) => e.metodo === "arboreo");
   const fitoOpts = (sel, metodo) => Object.entries(metodo === "herbaceo" ? HERB_FITOS : EQUACOES_VOLUME)
     .map(([k, v]) => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(typeof v === "string" ? v : v.rotulo)}</option>`).join("");
   const estagioOpts = (sel) => ['<option value="">— (sem estágio)</option>']
@@ -758,7 +778,8 @@ function telaConfig() {
   const metodoOpts = (sel) => [["arboreo", "Arbóreo (parcelas · CAP/altura/volume)"], ["herbaceo", "Herbáceo (1×1 m · Braun-Blanquet)"], ["censo", "Censo (mapa · pontos georreferenciados)"]]
     .map(([k, t]) => `<option value="${k}" ${k === (sel || "arboreo") ? "selected" : ""}>${t}</option>`).join("");
   const estratosHtml = inv.estratos.map((e) => `<div class="estrato-edit" data-est="${e.id}">
-    <div class="estrato-titulo">${esc(rotuloFito(e.fitofisionomia))}${ehHerbaceo(e) ? " · herbáceo" : ehCenso(e) ? " · censo" : (e.estagio ? " — " + esc(e.estagio) : "")}</div>
+    <div class="estrato-titulo">${esc((e.nomeCustom || "").trim() || rotuloFito(e.fitofisionomia))}${ehHerbaceo(e) ? " · herbáceo" : ehCenso(e) ? " · censo" : (e.estagio ? " — " + esc(e.estagio) : "")}</div>
+    <label>Nome do estrato <small>(opcional — ex.: nome do polígono)</small><input class="e-nome" data-est="${e.id}" value="${esc(e.nomeCustom || "")}" placeholder="${esc(rotuloFito(e.fitofisionomia))}" autocomplete="off"></label>
     <label>Método de levantamento<select class="e-metodo" data-est="${e.id}">${metodoOpts(e.metodo)}</select></label>
     <div class="linha2">
       <label>Fitofisionomia<select class="e-fito" data-est="${e.id}">${fitoOpts(e.fitofisionomia, e.metodo)}</select></label>
@@ -782,7 +803,7 @@ function telaConfig() {
       <div class="info">Cada estrato = uma <b>fitofisionomia + estágio</b>. Adicione quantos precisar (ex.: Mata FES Inicial, Mata FES Médio, Cerradão…). Cada parcela é vinculada a um estrato.</div>
       <div id="estratos">${estratosHtml}</div>
       <button class="btn-sec" id="add-est">+ Adicionar estrato</button>
-
+      ${temArboreo ? `
       <h3>Parcela</h3>
       <label class="campo">Forma
         <select id="cfg-forma">
@@ -803,8 +824,11 @@ function telaConfig() {
       <label class="campo">Erro-alvo (%)<input id="cfg-alvo" type="number" step="0.5" value="${c.erroAlvoPct}"></label>
       <label class="check"><input type="checkbox" id="cfg-correcao" ${c.correcaoFinita ? "checked" : ""}> Correção de população finita</label>
       <label class="campo">Critério de inclusão — DAP mínimo (cm)<input id="cfg-dapmin" type="number" step="0.5" value="${c.dapMinCm}"></label>
+      ` : ""}
+      <button class="btn-grande destaque" id="cfg-salvar">✓ Salvar e ir pro projeto</button>
     </main>`;
   ligarVoltar(() => telaInventario(inv.id));
+  $("#cfg-salvar").onclick = async () => { await salvarJa(); telaInventario(inv.id); };
 
   function renderDims() {
     const box = $("#dims-parc");
@@ -825,14 +849,26 @@ function telaConfig() {
     const ha = areaParcelaHa(c);
     $("#area-info").textContent = ha ? `Área da parcela: ${fmtNum(ha * 10000, 2)} m² = ${fmtNum(ha, 4)} ha` : "Informe as dimensões da parcela.";
   }
-  renderDims(); mostrarArea();
-
   $("#cfg-nome").oninput = (e) => { inv.nome = e.target.value; agendarSalvar(); };
-  $("#cfg-forma").onchange = (e) => { c.formaParcela = e.target.value; renderDims(); mostrarArea(); agendarSalvar(); };
-  $("#cfg-nivel").onchange = (e) => { c.nivelPct = parseInt(e.target.value, 10); agendarSalvar(); };
-  $("#cfg-alvo").oninput = (e) => { c.erroAlvoPct = parseFloat(e.target.value) || 10; agendarSalvar(); };
-  $("#cfg-correcao").onchange = (e) => { c.correcaoFinita = e.target.checked; agendarSalvar(); };
-  $("#cfg-dapmin").oninput = (e) => { c.dapMinCm = parseFloat(e.target.value) || 0; agendarSalvar(); };
+  // seções de parcela/erro só existem no DOM quando há estrato arbóreo
+  if (temArboreo) {
+    renderDims(); mostrarArea();
+    $("#cfg-forma").onchange = (e) => { c.formaParcela = e.target.value; renderDims(); mostrarArea(); agendarSalvar(); };
+    $("#cfg-nivel").onchange = (e) => { c.nivelPct = parseInt(e.target.value, 10); agendarSalvar(); };
+    $("#cfg-alvo").oninput = (e) => { c.erroAlvoPct = parseFloat(e.target.value) || 10; agendarSalvar(); };
+    $("#cfg-correcao").onchange = (e) => { c.correcaoFinita = e.target.checked; agendarSalvar(); };
+    $("#cfg-dapmin").oninput = (e) => { c.dapMinCm = parseFloat(e.target.value) || 0; agendarSalvar(); };
+  }
+  // nome custom do estrato (item 4b) — atualiza o título do bloco ao vivo
+  $$(".e-nome").forEach((el) => {
+    el.oninput = () => {
+      const e = estPorId(el.dataset.est);
+      e.nomeCustom = el.value;
+      const t = document.querySelector(`.estrato-edit[data-est="${e.id}"] .estrato-titulo`);
+      if (t) t.textContent = (el.value || "").trim() || rotuloFito(e.fitofisionomia);
+      agendarSalvar();
+    };
+  });
   $("#add-est").onclick = async () => { inv.estratos.push(novoEstrato()); await salvarJa(); telaConfig(); };
   $$(".e-area").forEach((el) => { el.oninput = () => { estPorId(el.dataset.est).areaTotalHa = parseFloat(el.value) || null; agendarSalvar(); }; });
   const aplicaEstrato = (el, campo) => {
@@ -840,7 +876,9 @@ function telaConfig() {
     e[campo] = el.value;
     e.nome = rotuloFito(e.fitofisionomia) + (ehHerbaceo(e) ? "" : (e.estagio ? " — " + e.estagio : ""));
     const t = document.querySelector(`.estrato-edit[data-est="${e.id}"] .estrato-titulo`);
-    if (t) t.textContent = e.nome;
+    if (t) t.textContent = (e.nomeCustom || "").trim() || e.nome;
+    const inp = document.querySelector(`.estrato-edit[data-est="${e.id}"] .e-nome`);
+    if (inp) inp.placeholder = rotuloFito(e.fitofisionomia);
     agendarSalvar();
   };
   $$(".e-fito").forEach((el) => { el.onchange = () => aplicaEstrato(el, "fitofisionomia"); });

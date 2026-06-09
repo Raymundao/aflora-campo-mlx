@@ -331,6 +331,12 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .bloqueio-tit { margin: 6px 0 10px; }
 .bloqueio .campo input { text-align: center; letter-spacing: 1px; text-transform: uppercase; }
 .bloqueio-aviso { color: #c62828; font-weight: 600; min-height: 1.2em; margin-top: 8px; }
+/* ⚙ discreto no canto do card de estrato (abre a Config) */
+.estrato-card { position: relative; }
+.estrato-card .estrato-nome { padding-right: 26px; }
+.estrato-cfg { position: absolute; top: 7px; right: 7px; z-index: 2; background: transparent; border: 0;
+  font-size: 16px; line-height: 1; opacity: .4; cursor: pointer; padding: 3px 5px; }
+.estrato-cfg:active { opacity: .85; }
 /* régua de medição: overlay SVG por cima do mapa, sempre colada na mira */
 .censo-regua { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 590; pointer-events: none; }
 .censo-regua line { stroke: #1565C0; stroke-width: 2; stroke-opacity: .9; }
