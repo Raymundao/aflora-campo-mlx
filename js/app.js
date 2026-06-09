@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v12"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v13"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -43,10 +43,16 @@ document.addEventListener("click", (ev) => {
 // ---------- lightbox de foto (toca a miniatura → abre em tela cheia) ----------
 // Handler único delegado: qualquer <img> dentro de .foto-item abre ampliada.
 function abrirLightbox(src) {
+  if (document.querySelector(".lightbox")) return; // 1 lightbox por vez (evita trap empilhado)
   const ov = document.createElement("div");
   ov.className = "lightbox";
   ov.innerHTML = `<img src="${src}" alt=""><button class="lightbox-fechar" aria-label="Fechar">✕</button>`;
-  ov.onclick = () => ov.remove();
+  // o voltar do Android fecha SÓ o lightbox (não a tela de fundo) e restaura o
+  // voltar anterior; o trap da tela é consumido e re-armado pelo popstate.
+  const anterior = voltarAtual;
+  const fechar = () => { ov.remove(); voltarAtual = anterior; };
+  ov.onclick = fechar;
+  voltarAtual = fechar;
   document.body.appendChild(ov);
 }
 document.addEventListener("click", (ev) => {
@@ -110,13 +116,38 @@ function header(titulo, voltarFn) {
     <span class="status-salvo ok" id="status-salvo">✓ salvo</span>
   </header>`;
 }
-function ligarVoltar(fn) { const b = $("#btn-voltar"); if (b) b.onclick = fn; }
+// ---- botão VOLTAR do Android (History API, modelo "trap") ----
+// Antes o app não usava history, então o voltar do celular fechava o app. Agora
+// mantemos UMA entrada extra de histórico ("trap") sempre que existe tela-pai;
+// ao pressionar voltar, o popstate sobe 1 nível (chama voltarAtual) e re-arma o
+// trap. A profundidade vive na cadeia de voltarAtual, não na pilha do navegador —
+// por isso navegação programática "pra cima" não cria entradas-fantasma.
+let voltarAtual = null, _navBack = false;
+function setVoltar(fn) {
+  const tinha = !!voltarAtual;
+  voltarAtual = fn || null;
+  if (voltarAtual && !tinha && !_navBack) history.pushState({ _aflora: true }, "");
+}
+function ligarVoltar(fn) {
+  setVoltar(fn);
+  const b = $("#btn-voltar");
+  if (b) b.onclick = () => history.back();
+}
+window.addEventListener("popstate", () => {
+  const fn = voltarAtual;
+  if (!fn) return; // raiz → deixa o sistema fechar o app
+  voltarAtual = null;
+  _navBack = true;
+  try { fn(); } finally { _navBack = false; }
+  if (voltarAtual) history.pushState({ _aflora: true }, ""); // re-arma o trap
+});
 
 // ============================================================
 // TELA 1 — lista de inventários
 // ============================================================
 async function telaInventarios() {
   inv = null;
+  voltarAtual = null; // tela raiz: voltar do Android aqui fecha o app (comportamento normal)
   const lista = await db.listarInventarios();
   const cards = lista.map((i) => {
     const nParc = i.parcelas?.length || 0;
@@ -1645,15 +1676,25 @@ async function telaFotosParcela(parcelaId) {
       (pos) => { ultimaCoord = { lat: pos.coords.latitude, lon: pos.coords.longitude }; },
       () => {}, { enableHighAccuracy: true, timeout: 10000 });
   }
-  const secoes = CATEGORIAS_FOTO.map((cat) => {
-    const fc = fotos.filter((f) => (f.categoria || "Geral") === cat);
-    return `<div class="cat-sec">
+  // Parcela herbácea não tem estratos florestais (dossel/sub-bosque/serrapilheira):
+  // mostra UMA galeria plana, sem subdivisão. Arbórea mantém as 4 categorias.
+  const herb = ehHerbaceo(estPorId(p.estratoId));
+  const secoes = herb
+    ? `<div class="cat-sec">
+      <div class="cat-head"><b>Fotos da parcela</b>
+        <span class="cat-acoes"><button class="btn-foto" data-cat="" title="Tirar foto">📷</button>
+        <button class="btn-foto" data-cat-gal="" title="Importar da galeria">🖼️</button></span></div>
+      ${fotos.length ? galeriaHTML(fotos) : '<p class="vazio-min">— sem fotos</p>'}
+    </div>`
+    : CATEGORIAS_FOTO.map((cat) => {
+      const fc = fotos.filter((f) => (f.categoria || "Geral") === cat);
+      return `<div class="cat-sec">
       <div class="cat-head"><b>${cat}</b>
         <span class="cat-acoes"><button class="btn-foto" data-cat="${cat}" title="Tirar foto">📷</button>
         <button class="btn-foto" data-cat-gal="${cat}" title="Importar da galeria">🖼️</button></span></div>
       ${fc.length ? galeriaHTML(fc) : '<p class="vazio-min">— sem fotos</p>'}
     </div>`;
-  }).join("");
+    }).join("");
   app.innerHTML = `${header("Fotos · " + (p.rotulo || "parcela"), () => telaParcelasDoEstrato(p.estratoId))}
     <main>
       <div class="info">📷 tira na hora · 🖼️ importa da galeria. Nome, coordenadas e data são carimbados <b>só na exportação</b>.</div>
@@ -1662,13 +1703,15 @@ async function telaFotosParcela(parcelaId) {
   ligarVoltar(() => telaParcelasDoEstrato(p.estratoId));
   $$("[data-cat]").forEach((el) => {
     el.onclick = async () => {
-      const foto = await capturarFoto(inv.id, "parcela", parcelaId, { ...ultimaCoord, categoria: el.dataset.cat });
+      const cat = el.dataset.cat; // "" no herbáceo → sem categoria (export cai em "Geral", sem subpasta)
+      const foto = await capturarFoto(inv.id, "parcela", parcelaId, cat ? { ...ultimaCoord, categoria: cat } : { ...ultimaCoord });
       if (foto) telaFotosParcela(parcelaId);
     };
   });
   $$("[data-cat-gal]").forEach((el) => {
     el.onclick = async () => {
-      const foto = await capturarFoto(inv.id, "parcela", parcelaId, { ...ultimaCoord, categoria: el.dataset.catGal, galeria: true });
+      const cat = el.dataset.catGal;
+      const foto = await capturarFoto(inv.id, "parcela", parcelaId, cat ? { ...ultimaCoord, categoria: cat, galeria: true } : { ...ultimaCoord, galeria: true });
       if (foto) telaFotosParcela(parcelaId);
     };
   });
@@ -1707,10 +1750,10 @@ async function exportarZipParcelas(invId) {
   const cont = {};
   for (const f of fotos) {
     const rot = rotulo[f.refKey] || f.refKey;
-    const cat = f.categoria || "Geral";
-    const chave = nomeSeguro(cat) + "/" + nomeSeguro(rot);
+    const cat = f.categoria || ""; // herbáceo não tem categoria → sem subpasta nem carimbo "· Geral"
+    const chave = (cat ? nomeSeguro(cat) + "/" : "") + nomeSeguro(rot);
     cont[chave] = (cont[chave] || 0) + 1;
-    const carimbada = await carimbarTexto(f.blob, [`${rot} · ${cat}`, coordTexto(f.lat, f.lon), dataTexto(f.capturadaEm)]);
+    const carimbada = await carimbarTexto(f.blob, [cat ? `${rot} · ${cat}` : rot, coordTexto(f.lat, f.lon), dataTexto(f.capturadaEm)]);
     arquivos.push({ nome: `${chave}/${nomeSeguro(rot)}_${cont[chave]}.jpg`, dados: await carimbada.arrayBuffer() });
   }
   baixar(`${nomeSeguro(inv2.nome)}_fotos_parcelas.zip`, criarZip(arquivos), "application/zip");
@@ -1746,8 +1789,8 @@ async function exportarProjetoCompleto(invId, onProgress) {
       arquivos.push({ nome: `${chave}/${esp}_${contE[chave]}.jpg`, dados });
     } else if (f.tipo === "parcela") {
       const rot = rotulo[f.refKey] || f.refKey;
-      const cat = f.categoria || "Geral";
-      const chave = "fotos/parcelas/" + nomeSeguro(cat) + "/" + nomeSeguro(rot);
+      const cat = f.categoria || ""; // herbáceo: sem subpasta de categoria
+      const chave = "fotos/parcelas/" + (cat ? nomeSeguro(cat) + "/" : "") + nomeSeguro(rot);
       contP[chave] = (contP[chave] || 0) + 1;
       arquivos.push({ nome: `${chave}/${nomeSeguro(rot)}_${contP[chave]}.jpg`, dados });
     }
@@ -1929,7 +1972,23 @@ async function telaCenso(estratoId, modo = "censo") {
     ligarVoltar(() => telaInventario(inv.id));
     return;
   }
-  const voltar = () => { destruirMapa(); telaInventario(inv.id); };
+  // Voltar do mapa: se houver overlay aberto (form de ponto, camadas, lista, barra
+  // de desenho/importação), fecha SÓ o overlay — igual ao ✕ — em vez de destruir o
+  // mapa. Só sai do mapa quando não há nada aberto por cima. Assim o voltar do
+  // Android fecha camada por camada, sem perder o mapa nem dado em edição.
+  function fecharOverlayAberto() {
+    if (desenho) { limparDesenho(); return true; }
+    const barra = $("#censo-barra");
+    if (barra && !barra.hidden && barra.innerHTML.trim()) { barra.hidden = true; barra.innerHTML = ""; mostrarAdd(true); return true; }
+    const painel = $("#censo-painel");
+    if (painel && painel.innerHTML.trim()) { painel.innerHTML = ""; mostrarAdd(true); return true; }
+    return false;
+  }
+  const voltar = () => {
+    if (fecharOverlayAberto()) { voltarAtual = voltar; return; } // fecha overlay, mantém o mapa, re-arma o trap
+    destruirMapa(); telaInventario(inv.id);
+  };
+  setVoltar(voltar); // mapa entra na navegação do voltar do Android
   // tela cheia (estilo AlpineQuest): mapa ocupa tudo, controles flutuam por cima.
   app.innerHTML = `<div class="censo-tela">
       <div id="mapa"></div>
@@ -2211,7 +2270,7 @@ async function telaCenso(estratoId, modo = "censo") {
     manterTelaLigada(true); // tela ligada no mapa → iOS não suspende o GPS no censo
   }
 
-  $("#censo-voltar").onclick = voltar;
+  $("#censo-voltar").onclick = () => history.back();
   $("#censo-centrar").onclick = () => { seguindo = true; $("#censo-centrar").classList.add("ativo"); if (userLatLng) map.easeTo({ center: [userLatLng.lng, userLatLng.lat], zoom: Math.max(map.getZoom(), 18), duration: 300 }); };
   $("#censo-centrar").classList.add("ativo");
   if (!ehFitos) {
