@@ -25,7 +25,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v14"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v15"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -177,11 +177,7 @@ async function telaInventarios() {
       <p class="versao">Aflora Campo · ${APP_VERSION} · <button id="forcar-update" class="link-update">forçar atualização</button></p>
     </main>`;
 
-  $("#novo-inv").onclick = async () => {
-    inv = novoInventario();
-    await db.salvarInventario(inv);
-    telaConfig(); // abre a Config primeiro: nome + estratos (fitofisionomia/estágio)
-  };
+  $("#novo-inv").onclick = () => telaWizard(); // pergunta o que a pessoa vai fazer antes da Config
   // Importar JSON exportado (backup/restauração). Gera novo id pra não sobrescrever.
   $("#importar").onclick = () => $("#file-import").click();
   $("#file-import").onchange = async (e) => {
@@ -700,6 +696,53 @@ function telaExportar(invId) {
       };
       $("#baixar-share").onclick = () => baixar(dados.nome, dados.blob, dados.mime);
     }, 30);
+  };
+}
+
+// ============================================================
+// WIZARD — "o que você vai fazer?" ao criar projeto novo (mais didático que cair
+// direto na Config). Cria os estratos com o método certo e guarda config.modulos.
+// ============================================================
+const WIZARD_OPCOES = [
+  { k: "censo", emoji: "🌳", tit: "Censo de árvores", desc: "Pontos no mapa com placa, CAP e altura", metodo: "censo" },
+  { k: "arboreo", emoji: "🌲", tit: "Parcelas de floresta (FES)", desc: "Parcelas com CAP / altura / volume", metodo: "arboreo" },
+  { k: "herbaceo", emoji: "🌱", tit: "Parcelas de cerrado / herbáceo", desc: "Parcelas 1×1 m, Braun-Blanquet", metodo: "herbaceo" },
+  { k: "mapa", emoji: "🗺️", tit: "Só mapa", desc: "Desenhar áreas e pegar pontos, sem medir árvores", metodo: "censo" },
+];
+function telaWizard() {
+  const sel = new Set();
+  app.innerHTML = `${header("Novo projeto", telaInventarios)}
+    <main class="form">
+      <label class="campo">Nome do projeto<input id="wz-nome" placeholder="Ex.: Inventário Fazenda X" autocomplete="off"></label>
+      <h3>O que você vai fazer?</h3>
+      <p class="info">Toque no que se aplica (pode marcar mais de um). Mapa e Espécies ficam sempre disponíveis. Você ajusta tudo depois na Config.</p>
+      <div class="cards">${WIZARD_OPCOES.map((o) => `<div class="card wz-op" data-k="${o.k}">
+        <div class="card-corpo"><div class="card-nome">${o.emoji} ${esc(o.tit)}</div>
+          <div class="card-sub">${esc(o.desc)}</div></div>
+        <div class="card-acoes"><span class="wz-check">○</span></div></div>`).join("")}</div>
+      <button class="btn-grande destaque" id="wz-criar">Criar projeto →</button>
+    </main>`;
+  ligarVoltar(telaInventarios);
+  $$(".wz-op").forEach((el) => {
+    el.onclick = () => {
+      const k = el.dataset.k;
+      if (sel.has(k)) sel.delete(k); else sel.add(k);
+      el.classList.toggle("sel", sel.has(k));
+      const chk = el.querySelector(".wz-check"); if (chk) chk.textContent = sel.has(k) ? "●" : "○";
+    };
+  });
+  $("#wz-criar").onclick = async () => {
+    const nome = ($("#wz-nome").value || "").trim() || "Novo inventário";
+    inv = novoInventario(nome);
+    const picks = WIZARD_OPCOES.filter((o) => sel.has(o.k));
+    if (picks.length) {
+      inv.config.modulos = picks.map((o) => o.k);
+      // cria 1 estrato por método escolhido (dedup: "censo" e "mapa" usam método censo)
+      const metodos = [...new Set(picks.map((o) => o.metodo))];
+      inv.estratos = metodos.map((m) => novoEstrato("mata_fes", "", m));
+    }
+    await db.salvarInventario(inv);
+    telaConfig(); // ajuste fino (fitofisionomia, tamanho de parcela, erro) com método já pré-definido
   };
 }
 
