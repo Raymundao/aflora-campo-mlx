@@ -1,6 +1,6 @@
 // Service worker — cache offline dos assets do app. Cache-first com atualização
 // em segundo plano. Suba a versão (CACHE) ao alterar arquivos pra forçar refresh.
-const CACHE = "aflora-campo-glx-v12";
+const CACHE = "aflora-campo-glx-v14";
 const TILES = "aflora-tiles-glx-v2";   // v2: purga tiles velhas/borradas do cache antigo
 const ASSETS = [
   "./", "./index.html", "./manifest.webmanifest",

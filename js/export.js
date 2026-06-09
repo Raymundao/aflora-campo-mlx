@@ -260,6 +260,60 @@ export function exportarCensoKMZ(inv) {
   baixar(`${slug(inv.nome)}_censo.kmz`, zip, "application/vnd.google-earth.kmz");
 }
 
+// --- exports SEPARADOS por camada (seletor do botão Exportar do mapa) ---
+const _escX = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const _kmlDoc = (nome, corpo) => `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${_escX(nome)}</name>${corpo}</Document></kml>`;
+function _marksPontos(inv) {
+  return pontosCenso(inv).filter(({ pt }) => pt.lat != null && pt.lon != null).map(({ est, pt }) => {
+    const caps = pt.fustes.map((f) => f.capCm).filter((v) => v != null).map((v) => numBR(v, 1)).join("+");
+    const alts = pt.fustes.map((f) => f.alturaM).filter((v) => v != null).map((v) => numBR(v, 1)).join("/");
+    const nome = [pt.placa, pt.especie, caps ? `CAP ${caps}` : "", alts ? `H ${alts}` : ""].filter(Boolean).join(" | ");
+    const coord = `${pt.lon},${pt.lat}${pt.alt != null ? "," + pt.alt : ""}`;
+    return `<Placemark><name>${_escX(nome || "ponto")}</name><Point><coordinates>${coord}</coordinates></Point></Placemark>`;
+  }).join("");
+}
+function _marksFitos(inv) {
+  let s = "";
+  for (const pol of (inv.fitos || [])) {
+    if (!pol.coords || pol.coords.length < 3) continue;
+    const anel = pol.coords.concat([pol.coords[0]]).map(([la, lo]) => `${lo},${la}`).join(" ");
+    const nome = [pol.fito, pol.nome].filter(Boolean).join(" · ") || "fitofisionomia";
+    const corLinha = kmlCor(pol.corBorda, 1) || "ff2e7d32";
+    const corFill = kmlCor(pol.cor, pol.opacidade == null ? 0.3 : pol.opacidade) || "4d43a047";
+    s += `<Placemark><name>${_escX(nome)}</name><Style><LineStyle><color>${corLinha}</color><width>2</width></LineStyle><PolyStyle><color>${corFill}</color></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${anel}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+  }
+  return s;
+}
+function _marksGeoRefs(inv) {
+  let s = "";
+  for (const r of (inv.geoRefs || [])) {
+    const nome = r.nome || r.tipo || "referência";
+    if (r.tipo === "ponto" && r.coords && r.coords[0]) {
+      const [la, lo] = r.coords[0];
+      s += `<Placemark><name>${_escX(nome)}</name><Point><coordinates>${lo},${la}</coordinates></Point></Placemark>`;
+    } else if (r.tipo === "linha" && r.coords && r.coords.length >= 2) {
+      const cs = r.coords.map(([la, lo]) => `${lo},${la}`).join(" ");
+      s += `<Placemark><name>${_escX(nome)}</name><LineString><tessellate>1</tessellate><coordinates>${cs}</coordinates></LineString></Placemark>`;
+    } else if (r.tipo === "poligono" && r.coords && r.coords.length >= 3) {
+      const anel = r.coords.concat([r.coords[0]]).map(([la, lo]) => `${lo},${la}`).join(" ");
+      s += `<Placemark><name>${_escX(nome)}</name><Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${anel}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+    }
+  }
+  return s;
+}
+export function temPontosCenso(inv) { return pontosCenso(inv).some(({ pt }) => pt.lat != null && pt.lon != null); }
+export function temFitos(inv) { return (inv.fitos || []).some((p) => p.coords && p.coords.length >= 3); }
+export function temGeoRefs(inv) { return (inv.geoRefs || []).length > 0; }
+export function exportarPontosKMZ(inv) {
+  baixar(`${slug(inv.nome)}_pontos.kmz`, criarZip([{ nome: "doc.kml", dados: _kmlDoc(`${inv.nome} — pontos`, _marksPontos(inv)) }]), "application/vnd.google-earth.kmz");
+}
+export function exportarFitosKMZ(inv) {
+  baixar(`${slug(inv.nome)}_poligonos.kmz`, criarZip([{ nome: "doc.kml", dados: _kmlDoc(`${inv.nome} — polígonos desenhados`, _marksFitos(inv)) }]), "application/vnd.google-earth.kmz");
+}
+export function exportarGeoRefsKMZ(inv) {
+  baixar(`${slug(inv.nome)}_referencias.kmz`, criarZip([{ nome: "doc.kml", dados: _kmlDoc(`${inv.nome} — referências`, _marksGeoRefs(inv)) }]), "application/vnd.google-earth.kmz");
+}
+
 // Compartilha o XLSX; se não suportado, baixa. Retorna { ok, motivo }.
 export async function compartilharXLSX(inv) {
   const nome = `${slug(inv.nome)}.xlsx`;

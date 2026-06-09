@@ -18,13 +18,14 @@ import {
   exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar,
   temHerbaceo, exportarHerbaceoXLSX, exportarHerbaceoCSV,
   temCenso, exportarCensoKMZ, exportarCensoXLSX,
+  temPontosCenso, temFitos, temGeoRefs, exportarPontosKMZ, exportarFitosKMZ, exportarGeoRefsKMZ,
   inventarioParaJSON, blobXLSXInventario, blobXLSXHerbaceo, blobXLSXCenso, kmlCensoStr, slugNome,
 } from "./export.js";
 import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v13"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v14"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1526,12 +1527,22 @@ async function telaEspecie(invId, nome) {
   const rotulo = {};
   for (const p of inv.parcelas) rotulo[p.id] = p.rotulo || p.id;
   const fotos = (await db.fotosDoInventario(invId)).filter((f) => f.tipo === "especie" && f.refKey === nome);
-  // ocorrência: parcelas onde há indivíduo com esta espécie
-  const ocorre = [];
+  // ocorrência detalhada: parcelas (placas dos indivíduos / cobertura herbácea) e censo (placas dos pontos)
+  const ocorrParc = [];
   for (const p of inv.parcelas) {
-    const n = p.individuos.filter((ind) => (ind.especie || "").trim() === nome).length;
-    if (n) ocorre.push(`${rotulo[p.id]} (${n})`);
+    const placas = p.individuos.filter((ind) => (ind.especie || "").trim() === nome).map((ind) => String(ind.placa || "?").trim());
+    if (placas.length) ocorrParc.push({ rot: rotulo[p.id], placas });
+    else if ((p.taxons || []).some((t) => (t.nome || "").trim() === nome)) ocorrParc.push({ rot: rotulo[p.id], placas: null });
   }
+  const ocorrCenso = [];
+  for (const e of (inv.estratos || [])) {
+    const placas = (e.pontos || []).filter((pt) => (pt.especie || "").trim() === nome).map((pt) => String(pt.placa || "?").trim());
+    if (placas.length) ocorrCenso.push({ rot: e.nome || rotuloFito(e.fitofisionomia) || "Censo", placas });
+  }
+  const fmtOcor = (lista) => lista.map((o) => o.placas === null
+    ? `${esc(o.rot)} <small>(cobertura)</small>`
+    : `${esc(o.rot)} <small>— placa(s) ${esc(o.placas.join(", "))}</small>`).join("<br>");
+  const temOcor = ocorrParc.length || ocorrCenso.length;
   // pastas de fotos por parcela ("" = avulsa, fora de parcela)
   const porParc = {};
   for (const f of fotos) { const k = f.parcelaId || ""; (porParc[k] = porParc[k] || []).push(f); }
@@ -1550,9 +1561,9 @@ async function telaEspecie(invId, nome) {
       <div class="campo">Hábito
         <div class="bb-opts">${habBtn("arborea", "🌳 Arbórea")}${habBtn("nao_arborea", "🌿 Não-arbórea")}</div>
       </div>
-      <div class="info">${ocorre.length
-        ? "Ocorre em: <b>" + esc(ocorre.join(", ")) + "</b>"
-        : "Espécie avulsa — não registrada em parcelas (ex.: herbácea / fora das parcelas)."}</div>
+      <div class="info">${temOcor
+        ? `${ocorrParc.length ? `<b>Parcelas:</b><br>${fmtOcor(ocorrParc)}` : ""}${ocorrParc.length && ocorrCenso.length ? "<br>" : ""}${ocorrCenso.length ? `<b>Censo:</b><br>${fmtOcor(ocorrCenso)}` : ""}`
+        : "Espécie avulsa — não registrada em parcelas nem censo."}</div>
       <div class="acoes-linha">
         <button class="btn-grande" id="esp-foto">📷 Foto avulsa</button>
         <button class="btn-sec" id="esp-gal">🖼️ Galeria</button>
@@ -2007,7 +2018,8 @@ async function telaCenso(estratoId, modo = "censo") {
         ${ehFitos ? "" : '<button class="censo-fab" id="censo-trilha" title="Gravar trilha">🛤️</button>'}
         ${ehFitos ? "" : '<button class="censo-fab" id="censo-labels" title="Nomes: toque p/ placa → espécie → desligar">🏷️</button>'}
         <button class="censo-fab" id="censo-desenho" title="Desenhar fitofisionomia/polígono">✏️</button>
-        <button class="censo-fab" id="censo-importar" title="Importar KML (ADA…)">📂</button>
+        <button class="censo-fab" id="censo-importar" title="Importar KML/KMZ">📥</button>
+        <button class="censo-fab" id="censo-exportar" title="Exportar camadas">📤</button>
         <button class="censo-fab" id="censo-baixar" title="Baixar área offline">⬇</button>
       </div>
       <input type="file" id="kml-file" accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz" hidden>
@@ -2637,6 +2649,22 @@ async function telaCenso(estratoId, modo = "censo") {
     $("#imp-ref").onclick = () => { importMode = "ref"; fechar(); $("#kml-file").click(); };
     $("#imp-cancel").onclick = fechar;
   };
+  // Exportar camadas: seletor (pontos / polígonos desenhados / polígonos de visualização).
+  // Só mostra a opção que tem dado. Usa a mesma barra do importar (#censo-barra).
+  $("#censo-exportar").onclick = () => {
+    const barra = $("#censo-barra"); barra.hidden = false; mostrarAdd(false);
+    const opts = [];
+    if (temPontosCenso(inv)) opts.push('<button class="btn-sec" id="exp-pontos">📍 Pontos (KMZ)</button>', '<button class="btn-sec" id="exp-pontos-x">📊 Pontos (XLSX)</button>');
+    if (temFitos(inv)) opts.push('<button class="btn-sec" id="exp-fitos">▱ Polígonos desenhados</button>');
+    if (temGeoRefs(inv)) opts.push('<button class="btn-sec" id="exp-refs">👁️ Polígonos de visualização</button>');
+    barra.innerHTML = `<span class="barra-tit">Exportar:</span>${opts.join("") || '<span class="barra-tit">Nada pra exportar ainda.</span>'}<button class="btn-foto" id="exp-cancel">✕</button>`;
+    const fechar = () => { barra.hidden = true; barra.innerHTML = ""; mostrarAdd(true); };
+    if ($("#exp-pontos")) $("#exp-pontos").onclick = () => { exportarPontosKMZ(inv); fechar(); };
+    if ($("#exp-pontos-x")) $("#exp-pontos-x").onclick = () => { exportarCensoXLSX(inv); fechar(); };
+    if ($("#exp-fitos")) $("#exp-fitos").onclick = () => { exportarFitosKMZ(inv); fechar(); };
+    if ($("#exp-refs")) $("#exp-refs").onclick = () => { exportarGeoRefsKMZ(inv); fechar(); };
+    $("#exp-cancel").onclick = fechar;
+  };
   $("#kml-file").onchange = async (e) => {
     const file = e.target.files && e.target.files[0]; if (!file) return;
     try {
@@ -2909,6 +2937,8 @@ async function telaCenso(estratoId, modo = "censo") {
       <label class="campo">Espécie
         <div class="autocomplete">
           <input id="cf-especie" value="${esc(pt.especie)}" autocomplete="off" placeholder="Digite ou toque em ▾">
+          <button type="button" class="ac-cam" id="cf-foto" aria-label="Foto da espécie">📷</button>
+          <button type="button" class="ac-cam" id="cf-gal" aria-label="Foto da galeria">🖼️</button>
           <button type="button" class="ac-toggle" id="cf-esp-toggle">▾</button>
           <div class="ac-lista" id="cf-esp-lista" hidden></div>
         </div></label>
@@ -2936,6 +2966,15 @@ async function telaCenso(estratoId, modo = "censo") {
     const setEsp = (v) => { pt.especie = v; };
     $("#cf-especie").oninput = (e) => setEsp(e.target.value);
     ligarAutocomplete($("#cf-especie"), $("#cf-esp-toggle"), $("#cf-esp-lista"), () => especiesDoInventario(inv), setEsp);
+    // foto da espécie no censo (mesmo padrão das parcelas: organiza por espécie na aba Espécies)
+    const fotoPonto = async (galeria) => {
+      const nome = (pt.especie || "").trim();
+      if (!nome) { alert("Preencha a espécie antes de adicionar a foto."); return; }
+      const foto = await capturarFoto(inv.id, "especie", nome, { lat: pt.lat, lon: pt.lon, galeria });
+      if (foto) { adicionarEspecie(inv, nome); await salvarJa(); }
+    };
+    $("#cf-foto").onclick = () => fotoPonto(false);
+    $("#cf-gal").onclick = () => fotoPonto(true);
     $("#cf-addfuste").onclick = () => { pt.fustes.push(novoFuste()); $("#cf-fustes").innerHTML = fustesHtml(); ligarFustes(); };
     $("#cf-mover").onclick = async () => {
       const c = map.getCenter();
